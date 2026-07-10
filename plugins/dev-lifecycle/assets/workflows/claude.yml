@@ -43,6 +43,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+      actions: read   # lets Claude read CI results on PRs
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,7 +68,10 @@ jobs:
             https://github.com/<owner>/firm-plugins.git
           plugins: |
             dev-lifecycle@firm-plugins
-          # The plugin is loaded above — this standing instruction tells the
-          # agent to actually USE the firm's skills, not just have them present.
+          # The plugin is loaded above. This standing instruction tells the agent
+          # to actually USE the firm's skills, not just have them present. Use
+          # --system-prompt (the documented tag-mode customization knob shown in
+          # the action's examples/claude.yml); the comment/PR context is injected
+          # separately, so this does not suppress tag-mode behavior.
           claude_args: |
-            --append-system-prompt "This repository is built by the development firm. The dev-lifecycle plugin (dev-lifecycle@firm-plugins) is loaded and its skills are available to you — USE them for all work: planning, backend, frontend, testing, code-review, devops, documentation, and the rest. They encode the firm's conventions and definition-of-done. Prefer the matching skill over ad-hoc work."
+            --system-prompt "This repository is built by the development firm. The dev-lifecycle plugin (dev-lifecycle@firm-plugins) is loaded and its skills are available. For the requested work, use the matching firm skill (planning, backend, frontend, testing, code-review, devops, documentation, and the rest) rather than working ad-hoc, and follow the firm conventions and definition-of-done."

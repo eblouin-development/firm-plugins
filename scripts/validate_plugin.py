@@ -166,6 +166,12 @@ for path in wf_templates:
             if w.get("anthropic_api_key"):
                 err(f"{rel}: uses 'anthropic_api_key' — the firm authenticates "
                     "with CLAUDE_CODE_OAUTH_TOKEN only")
+            # The action documents --system-prompt for standing instructions;
+            # --append-system-prompt is undocumented for it and its bundled CLI
+            # rejects it, which silently breaks tag mode. Forbid it.
+            if "--append-system-prompt" in str(w.get("claude_args", "")):
+                err(f"{rel}: claude_args uses '--append-system-prompt' — the "
+                    "action's CLI rejects it; use '--system-prompt' instead")
 
 # report
 for w in warnings:
