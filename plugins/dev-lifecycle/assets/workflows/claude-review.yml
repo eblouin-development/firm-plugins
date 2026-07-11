@@ -2,8 +2,24 @@
 # updated PR. Same auth + plugin model as claude.yml (see that file's header
 # for the OAuth secret, GitHub App identity, and private-marketplace notes).
 #
-# Copy this into a project's .github/workflows/ and replace <owner> with the
-# marketplace repo owner.
+# Copy this into a project's .github/workflows/ and replace <owner> — in BOTH
+# the plugin_marketplaces URL and the routing prompt below — with the correct
+# handle. In plugin_marketplaces it is the marketplace repo owner; in the prompt
+# `@<owner>` is the repo owner's GitHub username, so their mention notifies them.
+#
+# ROUTING / HANDS-OFF LOOP: this workflow only has `contents: read`, so it
+# cannot push fixes — it diagnoses and then ROUTES by mention so the PR never
+# stalls waiting on a human unless a human is actually needed:
+#   - clear blocker/high fixes (no decision needed) -> the review ends its
+#     comment with `@claude`, which triggers claude.yml (that one has
+#     `contents: write`) to implement the fixes and push them. The push is a
+#     `synchronize` event, so this review re-runs on the new commit and the loop
+#     converges — terminating when the review comes back clean.
+#   - clean review, or any finding that needs a human decision before it can be
+#     implemented -> the review ends its comment with `@<owner>` so the owner is
+#     pinged. Decision-needed always routes to the owner, never to @claude.
+# claude.yml already allows the `claude` bot as an actor (allowed_bots), so the
+# review bot's `@claude` comment triggers it.
 
 name: Claude Review
 
@@ -42,6 +58,27 @@ jobs:
             and its skills are available — use them rather than reviewing
             ad-hoc. Post blocker and high-severity findings as PR comments.
             Do not merge; the human merges.
+
+            Then close the loop by posting ONE final routing comment, so the PR
+            is honored without human intervention unless a human is actually
+            needed. Decide the mention by the outcome of your review:
+            - If there are 🔴 blocker or 🟠 high findings AND every one of them
+              is a clear, mechanical fix that needs no decision, end that
+              comment with "@claude" plus a short instruction to implement the
+              fixes you listed. The implement workflow will pick it up, push the
+              fixes, and this review re-runs on the new commit.
+            - If the review is clean (no blocker/high findings), end that comment
+              with "@<owner>" — it is merge-ready and the merge is their call.
+            - If ANY finding needs a human decision before it can be implemented
+              (a design trade-off, an ambiguous requirement, an architectural
+              choice, or anything you are not confident to fix mechanically), end
+              that comment with "@<owner>", state the decision needed, and do NOT
+              tag @claude — a decision must be made before implementation.
+            Decision-needed always wins: if even one finding needs a call, route
+            to @<owner>, not @claude. To avoid an endless loop, if a blocker/high
+            finding you already handed to @claude is still present on re-review,
+            do not tag @claude again — route to @<owner> and explain that the
+            automated fix did not resolve it.
           # --allowedTools pre-approves the tools the review skill needs in a
           # headless run — Bash (to inspect the diff, run linters/tests, read CI
           # via gh) and the read/search tools. Without it they are rejected as

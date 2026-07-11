@@ -79,7 +79,7 @@ Zero footprint: local config goes in untracked files excluded via `.git/info/exc
 1. **`technical-proposal`** — "What should we build this with, and what will it take?" Recommends the stack + architecture, justifies it, and gives an honest cost/timeline. The build/no-build decision.
 2. **`scaffolding`** — creates and initializes the repo (`gh repo create`, structure, tooling, lean `CLAUDE.md`, pipeline wiring). This is what gives `product-planning` a place to file its epic.
 3. **`product-planning`** — "Plan out the whole product." Produces the north star: vision, architecture/stack decisions, and a **staged roadmap** as a GitHub **epic + milestones + an ADR** in the repo. It stops there — no build.
-4. **Per stage**, repeat: **`planning`** reads the epic + the stage stub, you go back and forth until you approve, then it files the stage issue as a **sub-issue of the epic** (with an `Epic: #<n>` marker and the issue number on the epic's checklist line) under its milestone and tags **`@claude`**. The build agent implements and opens a PR → the **review agent** takes it to merge-ready → **CI** runs → **you merge**. On merge the stage issue closes, and the **epic-checkoff** workflow ticks its box in the epic (and GitHub's native sub-issue rollup advances the epic's progress bar) — so the roadmap stays current without you touching it. Then **`devops`** deploys (Goatenheim beta, or your chosen target) → next stage.
+4. **Per stage**, repeat: **`planning`** reads the epic + the stage stub, you go back and forth until you approve, then it files the stage issue as a **sub-issue of the epic** (with an `Epic: #<n>` marker and the issue number on the epic's checklist line) under its milestone and tags **`@claude`**. The build agent implements and opens a PR → the **review agent** reviews and **routes the outcome**: clear blocker/high fixes get handed to **`@claude`** to implement automatically (which re-triggers the review, converging when clean), while a clean review or any finding that needs your decision pings **you** — so you're only pulled in when there's a call to make → **CI** runs → **you merge**. On merge the stage issue closes, and the **epic-checkoff** workflow ticks its box in the epic (and GitHub's native sub-issue rollup advances the epic's progress bar) — so the roadmap stays current without you touching it. Then **`devops`** deploys (Goatenheim beta, or your chosen target) → next stage.
 
 Because every stage plan references the epic and ADR, the whole product stays aligned to the north star.
 
@@ -91,7 +91,7 @@ Because every stage plan references the epic and ADR, the whole product stays al
 
 ### A feature or fix on an existing repo
 1. **`planning`** — talk it through; on your approval it files the issue and tags `@claude` (owned repos) or hands it to you to run (guest repos).
-2. Build agent → PR → review agent → CI → **you merge**.
+2. Build agent → PR → review agent (auto-routes: clear fixes back to `@claude`, a clean pass or a needed decision to you) → CI → **you merge**.
 
 ### The one rule that never changes
 Agents plan, build, review, and get to green — **you approve the plan and you merge.** No agent ever merges.
