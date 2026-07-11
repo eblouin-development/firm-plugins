@@ -21,7 +21,7 @@ firm-plugins/
 ├── plugins/dev-lifecycle/
 │   ├── .claude-plugin/plugin.json       # plugin manifest (semver)
 │   ├── skills/<skill>/SKILL.md          # one folder per skill
-│   ├── assets/workflows/                # canonical Action templates copied into each repo: implement + review (plugin + OAuth pre-wired) and epic-checkoff (ticks an epic's box on stage-issue close)
+│   ├── assets/workflows/                # thin caller stubs copied into each repo (implement + review) that `uses:` the reusable workflows below, plus epic-checkoff (ticks an epic's box on stage-issue close)
 │   ├── assets/scripts/                  # operator one-shots — retrofit-epic.sh backfills a pre-existing epic so epic-checkoff works on it
 │   ├── shared/                          # cross-skill references
 │   │   ├── token-efficiency.md          # the efficiency doctrine every skill follows
@@ -34,8 +34,10 @@ firm-plugins/
 ├── scripts/
 │   └── validate_plugin.py               # structural validator (manifests + SKILL.md frontmatter)
 └── .github/workflows/
+    ├── claude-implement.reusable.yml    # reusable (workflow_call): the implement Action, called by each repo's claude.yml stub
+    ├── claude-review.reusable.yml       # reusable (workflow_call): the review Action (incl. @claude/@owner routing), called by each repo's claude-review.yml stub
     ├── validate.yml                     # runs the validator on every push/PR (merge gate)
-    ├── release.yml                      # semver bump + tag on merged PR
+    ├── release.yml                      # semver bump + exact tag + moving Action-contract tag (@v1) on merged PR
     └── freshness-audit.yml              # weekly staleness check → tracking issue
 ```
 
@@ -63,6 +65,8 @@ All three **ground generation in current official docs, never recall**, and all 
 ## Releases (semver)
 
 Version lives in `plugin.json` and `marketplace.json`. `release.yml` bumps it on a merged PR based on a label — `release:major` / `release:minor` / `release:patch` (default patch) — then tags. Users only receive updates when the version bumps, so an in-progress push never destabilizes a working session. Roll back by pointing the catalog entry at a prior tag/commit.
+
+Each release also force-moves a **moving Action-contract tag** (`v1`) onto the release commit. Projects' Action caller stubs pin to it (`...reusable.yml@v1`), so improvements to the implement/review workflows reach the whole fleet on release — same "only on version bump" model as the plugin — without editing any project's `.github/workflows/`. The tag tracks the reusable-workflow *interface* (its inputs), not the plugin's semver; if that interface ever changes incompatibly, bump `ACTION_MAJOR` in `release.yml` and re-point the stub templates to the new `@vN`.
 
 ## Owned vs guest repos
 

@@ -1,0 +1,87 @@
+# Firm implement workflow — REUSABLE. Responds to @claude on issues and PRs.
+#
+# This file holds the real logic. Projects don't copy it — they call it from a
+# thin stub (assets/workflows/claude.yml) via `uses:`, so the wrapper lives in
+# ONE place instead of being duplicated and re-synced per repo. Improve the
+# prompt or tool list here once and every project on the same major tag picks
+# it up. The `on:` triggers MUST live in the caller (GitHub fires a reusable
+# workflow only through `workflow_call`), so this file declares none.
+#
+# Inputs/secrets: the caller passes `owner` (the firm/marketplace handle) and
+# inherits secrets. Auth is OAuth only — CLAUDE_CODE_OAUTH_TOKEN, never an
+# Anthropic API key. Permissions are granted by the caller job (a reusable
+# workflow's token is capped by the caller, and id-token must be granted there),
+# so this file does not re-declare them.
+#
+# GitHub identity: assumes the Claude GitHub App is installed on the CALLER
+# repo — the action uses the App's default token and `actions/checkout` checks
+# out the caller repo, so the agent operates on the project, not on this repo.
+#
+# PULL REQUESTS: claude-code-action does NOT open a PR on its own in tag mode —
+# by default it only pushes a branch and posts a "Create PR" compare link, which
+# leaves the pipeline stalled (the review stub triggers on `pull_request`, so no
+# PR means no review). We instruct the agent to open the PR itself with
+# `gh pr create` (see the system prompt), tagging the repo owner (`@<owner>`) in
+# the PR body. For that to work the caller repo must allow it: Settings ->
+# Actions -> General -> Workflow permissions -> "Allow GitHub Actions to create
+# and approve pull requests" must be ENABLED (the scaffolding/onboarding skills
+# turn this on via `gh api -X PUT .../actions/permissions/workflow ...`).
+#
+# WORKFLOW FILES: the agent CANNOT write files under `.github/workflows/` — the
+# Claude GitHub App token has no `workflows` permission AND the action injects a
+# hard prompt-level restriction against it. A task whose deliverable is a
+# workflow file cannot be finished hands-off: the agent commits it to a
+# clearly-labeled staging path and flags in the PR that a human must move it
+# into `.github/workflows/`.
+#
+# TOOL PERMISSIONS: headless runs approve nothing interactively, so any Bash
+# command the build/verify skills need (tests, linters, shellcheck, git, gh)
+# must be pre-approved via `--allowedTools`, or it is rejected as "requires
+# approval" and verification silently doesn't run.
+
+name: Claude (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      owner:
+        description: "Firm/marketplace owner handle — used in the plugin marketplace URL and the @owner PR ping."
+        required: true
+        type: string
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: "Claude subscription OAuth token. Pass via `secrets: inherit`."
+        required: true
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # By default the action ignores events whose actor is a bot. In the
+          # firm's autonomous pipeline the agent itself posts as a bot (e.g. an
+          # @claude follow-up on an issue or PR it is already working, or the
+          # review workflow's @claude routing comment), so those events must be
+          # allowed through or the pipeline stalls. Allow the Claude bot.
+          allowed_bots: "claude"
+          # plugin_marketplaces takes full git URLs, not owner/repo shorthand.
+          plugin_marketplaces: |
+            https://github.com/${{ inputs.owner }}/firm-plugins.git
+          plugins: |
+            dev-lifecycle@firm-plugins
+          # The plugin is loaded above. This standing instruction tells the agent
+          # to actually USE the firm's skills, not just have them present.
+          claude_args: |
+            --allowedTools "Bash,Edit,MultiEdit,Write,Read,Glob,Grep,TodoWrite,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files"
+            --system-prompt "This repository is built by the development firm. The dev-lifecycle plugin (dev-lifecycle@firm-plugins) is loaded and its skills are available. For the requested work, use the matching firm skill (planning, backend, frontend, testing, code-review, devops, documentation, and the rest) rather than working ad-hoc, and follow the firm conventions and definition-of-done. When the work is complete and your branch is pushed, OPEN A PULL REQUEST yourself against the repository default branch with `gh pr create` (give it a clear title and a body that summarizes the change and references the issue, and tag the repository owner by including `@${{ inputs.owner }}` on its own line in the body — e.g. `cc @${{ inputs.owner }}` — so they are notified and can pull the PR up quickly, including on mobile) — do not stop at the compare link; the action does not open the PR for you and the review pipeline only runs once a PR exists. Report status with complete honesty: mark a checklist item done ONLY if it actually completed, and never claim a PR was opened, tests or linters passed, or a file was written unless it truly happened. You CANNOT modify files under .github/workflows/ (the GitHub App lacks the workflows permission). If the task requires creating or changing a workflow file, do NOT silently relocate it and check the box — commit it to the branch under a clearly-labeled staging path (for example pending-workflows/) and state plainly in the PR description that a human must move each such file into .github/workflows/ before the pipeline is live, listing them. Whenever you create or change a GitHub Actions workflow file (including a staged one) run actionlint on it, and run shellcheck on any shell script you touch — install the linter if it is not already present — and fix every finding before opening the PR; these are CI gates, so an unlinted workflow or script fails review."

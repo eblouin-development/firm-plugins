@@ -10,7 +10,7 @@ Review the code that changed and either tell the user precisely what to fix (int
 ## Two modes
 
 - **Interactive (default).** A human asked for a review. Produce the structured, severity-ranked review and **stop** — read-only. Only make edits if the user then asks. Suggested fixes in the review are illustrative, not applied.
-- **Pipeline / review-agent.** Running as the automated reviewer on a PR the build agent opened. Review → apply fixes for real findings via the build skills → re-review the changed code → repeat until merge-ready → approve and **stop before merge**. The human merges (`${CLAUDE_PLUGIN_ROOT}/shared/definition-of-done.md`). Use this mode when the context is an automated PR review, not a chat request.
+- **Pipeline / review-agent.** Running as the automated reviewer on a PR the build agent opened. Review the change, then **route the outcome** so the PR moves without human intervention unless a human is actually needed (see "Routing the outcome" below). Where the reviewer has write access it may apply mechanical fixes directly and re-review; where it is diagnostic-only (the firm's `claude-review.yml` runs with `contents: read`) it routes by mention and lets the implement agent push the fixes. Either way it **stops before merge** — the human merges (`${CLAUDE_PLUGIN_ROOT}/shared/definition-of-done.md`). Use this mode when the context is an automated PR review, not a chat request.
 
 ## Core rules
 
@@ -46,6 +46,14 @@ Apply fixes for 🔴/🟠 findings via the `frontend`/`backend` skills (and `tes
 
 ### 5. Hand off
 Interactive: the recommendation and the must-fix shortlist. Pipeline: the approval, a summary of fixes applied, and confirmation it's merge-ready and awaiting the human's merge — or the escalation if it isn't.
+
+### 6. Route the outcome (automated pipeline)
+Post the individual findings as plain comments **without** any `@`-mention. Then, **only once the review is complete**, close the loop with exactly **one routing comment** — the sole place a mention appears, so a tag signals "review finished," not "another comment landed." Post it on the **pull request** (not the linked issue) so the follow-up work stays attached to and visible on the PR. Choose the mention by the overall outcome, so review comments are honored autonomously and a human is pulled in only when a human is genuinely required:
+- **Clear blocker/high fixes, no decision needed** → tag **`@claude`** and instruct it to implement the findings you listed. The implement agent (which has write access) pushes the fixes onto the PR branch, and that push re-triggers the review on the new commit — the loop converges when the review comes back clean.
+- **Clean review (no blocker/high)** → tag **`@<owner>`** (the repo owner): merge-ready, their call.
+- **A decision is needed before implementation** — a design trade-off, an ambiguous requirement, an architectural choice, or anything not confidently fixable mechanically → tag **`@<owner>`**, state the decision needed, and do **not** tag `@claude`.
+
+Decision-needed always wins: if even one finding needs a call, route to the owner, not `@claude`. Bound the loop — if a blocker/high finding you already routed to `@claude` is still present on re-review, don't re-tag `@claude`; route to `@<owner>` and explain the automated fix didn't resolve it. (`<owner>` is the repo owner's handle, substituted when the workflow is copied into a project.)
 
 ## What this skill does NOT do
 - Merge, in any mode.
