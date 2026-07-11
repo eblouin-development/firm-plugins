@@ -13,7 +13,7 @@ A Claude Code plugin marketplace (`firm-plugins`) containing one plugin (`dev-li
 - **18 skills** spanning the whole project lifecycle — `technical-proposal` → `product-planning` → `scaffolding` / `onboarding` → `planning` → `ui-exploration` / `design-system` → `backend` / `frontend` → `data` → `copywriting` → `testing` → `code-review` → `devops` / `infrastructure` → `dependency-maintenance` → `documentation` / `debugging`.
 - A **self-extending reference library** of per-library, version-aware docs (React, TypeScript, MUI, Tailwind, HTMX, FastAPI, Pydantic, SQLAlchemy, Postgres, Django, plus testing/devops/security/docs/debugging).
 - A **token-efficiency doctrine** every skill follows, and a shared **definition-of-done** that is the merge-ready bar.
-- Two automations: **semver release** on merge, and a weekly **freshness audit** that flags stale references.
+- Three automations: **semver release** on merge, a weekly **freshness audit** that flags stale references, and **epic checkoff** — a per-project workflow that ticks an epic's checkbox when a stage/feature issue closes on merge.
 
 The spine is GitHub: issues are the task queue, PRs are work-in-review, CI is QA, **merge is yours**.
 
@@ -79,7 +79,7 @@ Zero footprint: local config goes in untracked files excluded via `.git/info/exc
 1. **`technical-proposal`** — "What should we build this with, and what will it take?" Recommends the stack + architecture, justifies it, and gives an honest cost/timeline. The build/no-build decision.
 2. **`scaffolding`** — creates and initializes the repo (`gh repo create`, structure, tooling, lean `CLAUDE.md`, pipeline wiring). This is what gives `product-planning` a place to file its epic.
 3. **`product-planning`** — "Plan out the whole product." Produces the north star: vision, architecture/stack decisions, and a **staged roadmap** as a GitHub **epic + milestones + an ADR** in the repo. It stops there — no build.
-4. **Per stage**, repeat: **`planning`** reads the epic + the stage stub, you go back and forth until you approve, then it files the stage issue under its milestone and tags **`@claude`**. The build agent implements and opens a PR → the **review agent** takes it to merge-ready → **CI** runs → **you merge** → **`devops`** deploys (Goatenheim beta, or your chosen target) → next stage.
+4. **Per stage**, repeat: **`planning`** reads the epic + the stage stub, you go back and forth until you approve, then it files the stage issue as a **sub-issue of the epic** (with an `Epic: #<n>` marker and the issue number on the epic's checklist line) under its milestone and tags **`@claude`**. The build agent implements and opens a PR → the **review agent** takes it to merge-ready → **CI** runs → **you merge**. On merge the stage issue closes, and the **epic-checkoff** workflow ticks its box in the epic (and GitHub's native sub-issue rollup advances the epic's progress bar) — so the roadmap stays current without you touching it. Then **`devops`** deploys (Goatenheim beta, or your chosen target) → next stage.
 
 Because every stage plan references the epic and ADR, the whole product stays aligned to the north star.
 
