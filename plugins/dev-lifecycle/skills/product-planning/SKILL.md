@@ -35,6 +35,8 @@ Break the product into an ordered set of stages. For each: what it delivers, why
 - **Architecture ADR** — the decisions from step 2, via the `documentation` skill (its ADR format maps directly onto context / decision / consequences).
 - **Stage sub-issues** — file one native GitHub **sub-issue** per stage under the epic (even as a stub; `planning` fleshes it out when the stage begins). Give each an `Epic: #<n>` marker line pointing back at this epic. Two payoffs: GitHub rolls sub-issue completion into the epic's progress bar automatically, and the `epic-checkoff` workflow (shipped by `scaffolding`) uses the marker + the issue number on the checklist line to flip `- [ ]` → `- [x]` when a stage's issue closes on merge. So the epic stays current with zero manual upkeep.
 
+For an **epic that predates this wiring** (no markers, no numbers on its lines), backfill it once with `${CLAUDE_PLUGIN_ROOT}/assets/scripts/retrofit-epic.sh <owner/repo> <epic#> [stage-issue#…]` — it adds the markers, the numbers, and the sub-issue links, and ticks any already-merged stage. It's dry-run by default (`--apply` to write).
+
 Do **not** tag `@claude` — no stage is being built yet.
 
 ### 5. Hand off

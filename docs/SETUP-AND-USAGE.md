@@ -83,6 +83,12 @@ Zero footprint: local config goes in untracked files excluded via `.git/info/exc
 
 Because every stage plan references the epic and ADR, the whole product stays aligned to the north star.
 
+> **Retrofitting an older epic.** Epics created before the epic-checkoff wiring have no `Epic:` markers or issue numbers on their lines, so their boxes won't auto-tick. Migrate one in place with the bundled one-shot — dry-run first, then `--apply`:
+> ```bash
+> plugins/dev-lifecycle/assets/scripts/retrofit-epic.sh <owner/repo> <epic#> [stage-issue#…]
+> ```
+> It adds the markers and numbers, links the sub-issues, and ticks any stage that's already merged. Idempotent, so re-running is safe.
+
 ### A feature or fix on an existing repo
 1. **`planning`** — talk it through; on your approval it files the issue and tags `@claude` (owned repos) or hands it to you to run (guest repos).
 2. Build agent → PR → review agent → CI → **you merge**.
