@@ -1,33 +1,16 @@
-# Firm review workflow — runs the firm's code-review skill on every opened or
-# updated PR. Same auth + plugin model as claude.yml (see that file's header
-# for the OAuth secret, GitHub App identity, and private-marketplace notes).
+# Firm review workflow — thin caller stub. Runs the firm's code-review skill on
+# every opened or updated PR by calling the REUSABLE workflow in firm-plugins,
+# so the review prompt (including the @claude / @owner routing rules) lives in
+# ONE place instead of being duplicated per repo. Improve it once there; every
+# project on the same major tag (@v1) picks it up on the next firm-plugins
+# release — no re-sync of this file.
 #
-# Copy this into a project's .github/workflows/ and replace <owner> — in BOTH
-# the plugin_marketplaces URL and the routing prompt below — with the correct
-# handle. In plugin_marketplaces it is the marketplace repo owner; in the prompt
-# `@<owner>` is the repo owner's GitHub username, so their mention notifies them.
-#
-# ROUTING / HANDS-OFF LOOP: this workflow only has `contents: read`, so it
-# cannot push fixes — it diagnoses and then ROUTES by mention so the PR never
-# stalls waiting on a human unless a human is actually needed. The mention is
-# posted ONCE, only after the whole review is complete (individual findings are
-# plain comments with no @-mention) — so a tag means "review finished," not
-# "another comment landed":
-#   - clear blocker/high fixes (no decision needed) -> the routing comment ends
-#     with `@claude`, which triggers claude.yml (that one has `contents: write`)
-#     to implement the fixes and push them. The push is a `synchronize` event,
-#     so this review re-runs on the new commit and the loop converges —
-#     terminating when the review comes back clean.
-#   - clean review, or any finding that needs a human decision before it can be
-#     implemented -> the routing comment ends with `@<owner>` so the owner is
-#     pinged. Decision-needed always routes to the owner, never to @claude.
-# The routing comment is posted on the PULL REQUEST conversation (a
-# `pull_request`-scoped `issue_comment`), which claude.yml already listens for
-# (its `issue_comment` + `pull_request_review` triggers match `@claude`, and
-# `allowed_bots: "claude"` lets this review bot's comment through). Because that
-# event is on the PR, claude.yml's follow-up run and its progress tracking
-# appear on the PR itself — so anyone who opens the PR can see it is still
-# working, instead of the activity hiding on the originating issue.
+# Copy this into a project's .github/workflows/ and replace <owner> (appears
+# twice: the reusable-workflow path and the `owner` input) with the handle that
+# owns firm-plugins. The `owner` input is also who the review pings (`@<owner>`)
+# when a PR is clean or a decision is needed. See claude.yml for the shared
+# one-time setup (OAuth secret, GitHub App, Actions-created PRs, and the
+# private-repo Actions "Access" toggle) and for how to pin a different ref.
 
 name: Claude Review
 
@@ -37,63 +20,16 @@ on:
 
 jobs:
   review:
-    runs-on: ubuntu-latest
+    # contents:read is deliberate — the review diagnoses and ROUTES by mention;
+    # it never pushes fixes itself (the implement workflow does, when the review
+    # tags @claude). Permissions are granted here and flow to the reusable
+    # workflow.
     permissions:
       contents: read
       pull-requests: write
       issues: read
       id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # By default the action ignores events whose actor is a bot. The
-          # implement workflow's agent opens PRs as a bot, so without this the
-          # review never runs on an autonomously-opened PR. Allow the Claude bot.
-          allowed_bots: "claude"
-          # plugin_marketplaces takes full git URLs, not owner/repo shorthand.
-          plugin_marketplaces: |
-            https://github.com/<owner>/firm-plugins.git
-          plugins: |
-            dev-lifecycle@firm-plugins
-          prompt: |
-            Use the dev-lifecycle plugin's code-review skill to review this pull
-            request against the firm's definition-of-done. The plugin is loaded
-            and its skills are available — use them rather than reviewing
-            ad-hoc. Post blocker and high-severity findings as individual PR
-            comments, and do NOT put an @-mention on any of those per-finding
-            comments. Do not merge; the human merges.
-
-            Only once the review is COMPLETE, close the loop with exactly ONE
-            routing comment. Post it on the pull request itself (not on the
-            linked issue) so the follow-up work stays attached to and visible on
-            the PR. This single comment is the ONLY place an @-mention appears,
-            and the mention is chosen by the overall outcome of your review:
-            - If there are 🔴 blocker or 🟠 high findings AND every one of them
-              is a clear, mechanical fix that needs no decision, end the routing
-              comment with "@claude" plus a short instruction to implement the
-              fixes you listed. claude.yml picks it up, pushes the fixes onto
-              this PR branch, and this review re-runs on the new commit.
-            - If the review is clean (no blocker/high findings), end it with
-              "@<owner>" — it is merge-ready and the merge is their call.
-            - If ANY finding needs a human decision before it can be implemented
-              (a design trade-off, an ambiguous requirement, an architectural
-              choice, or anything you are not confident to fix mechanically), end
-              it with "@<owner>", state the decision needed, and do NOT tag
-              @claude — a decision must be made before implementation.
-            Decision-needed always wins: if even one finding needs a call, route
-            to @<owner>, not @claude. To avoid an endless loop, if a blocker/high
-            finding you already handed to @claude is still present on re-review,
-            do not tag @claude again — route to @<owner> and explain that the
-            automated fix did not resolve it.
-          # --allowedTools pre-approves the tools the review skill needs in a
-          # headless run — Bash (to inspect the diff, run linters/tests, read CI
-          # via gh) and the read/search tools. Without it they are rejected as
-          # "requires approval" and the review runs blind.
-          claude_args: |
-            --allowedTools "Bash,Read,Glob,Grep,TodoWrite"
-            --system-prompt "This repository is built by the development firm. The dev-lifecycle plugin (dev-lifecycle@firm-plugins) is loaded and its skills are available. Use them, and hold the change to the firm definition-of-done."
+    uses: <owner>/firm-plugins/.github/workflows/claude-review.reusable.yml@v1
+    secrets: inherit
+    with:
+      owner: <owner>
