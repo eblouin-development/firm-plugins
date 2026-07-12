@@ -38,10 +38,16 @@ jobs:
 
       - name: Coverage audit
         uses: anthropics/claude-code-action@v1
+        env:
+          # Read-only token for the (mostly private) fleet repos. Used ONLY by
+          # the prompt's `gh`/API reads below — deliberately NOT wired as the
+          # action's `github_token`, so opening the PR back to firm-plugins
+          # stays on the job's own least-privilege GITHUB_TOKEN (contents +
+          # pull-requests write, THIS repo only). Keeping the two separate means
+          # the fleet token never has write power on firm-plugins.
+          FLEET_READ_TOKEN: ${{ secrets.FLEET_READ_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Passed so Claude can read the (mostly private) fleet repos' manifests.
-          github_token: ${{ secrets.FLEET_READ_TOKEN }}
           plugin_marketplaces: |
             https://github.com/eblouin876/firm-plugins.git
           plugins: |
@@ -56,11 +62,15 @@ jobs:
             Steps:
             1. Read .github/fleet-repos.txt for the list of `owner/repo` to
                scan (ignore blank lines and `#` comments).
-            2. For each repo, fetch its dependency manifests via the GitHub API
-               / `gh` using the provided token (requirements*.txt,
+            2. For each repo, fetch its dependency manifests (requirements*.txt,
                pyproject.toml, package.json, uv.lock, Gemfile, go.mod — whatever
-               applies). If a private repo is unreachable, note it and skip it;
-               do not fail the run.
+               applies) by reading the fleet repo with the FLEET_READ_TOKEN env
+               var, e.g. `GH_TOKEN="$FLEET_READ_TOKEN" gh api
+               repos/<owner>/<repo>/contents/<manifest>`. Use that token ONLY
+               for reading fleet repos — the PR back to firm-plugins uses the
+               workflow's own token, not this one. If a private repo is
+               unreachable (token lacks access or the secret is unset), note it
+               and skip it; do not fail the run.
             3. Inventory the SIGNIFICANT DIRECT dependencies — frameworks and
                libraries with real, version-sensitive idioms. Skip transitive
                deps and trivial utilities with nothing idiomatic to document.
