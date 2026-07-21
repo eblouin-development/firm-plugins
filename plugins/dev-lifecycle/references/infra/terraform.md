@@ -4,7 +4,7 @@ versions-covered: "Terraform core ~> 1.15, hashicorp/aws provider ~> 6.x"
 last-verified: 2026-07-21
 provenance: manual
 sources:
-  - https://developer.hashicorp.com/terraform/enterprise/releases
+  - https://github.com/hashicorp/terraform/releases
   - https://registry.terraform.io/providers/hashicorp/aws/latest
   - https://developer.hashicorp.com/terraform/language/state/locking
   - https://developer.hashicorp.com/terraform/cli/workspaces

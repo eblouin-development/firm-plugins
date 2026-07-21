@@ -19,7 +19,7 @@ sources:
   - https://nextjs.org/docs/app/guides/upgrading/version-16
   - https://expo.dev/changelog/sdk-57
   - https://www.postgresql.org/about/news/postgresql-184-1710-1614-1518-and-1423-released-3297/
-  - https://developer.hashicorp.com/terraform/enterprise/releases
+  - https://github.com/hashicorp/terraform/releases
   - https://registry.terraform.io/providers/hashicorp/aws/latest
   - https://hub.docker.com/_/python
   - https://hub.docker.com/_/node
@@ -48,7 +48,7 @@ Re-verify against official release notes/registries before bumping any line — 
 | Python | **3.13.x** | Latest stable with a mature C-extension/wheel ecosystem; 3.14 (released Oct 2025) is current but young for some third-party wheels — reassess next quarter. |
 | FastAPI | **0.139.x** | Latest release line (0.139.2, Jul 2026); still pre-1.0, so pin the minor, not just the major. |
 | Pydantic | **v2, 2.13.x** | Pydantic v2 only — v1 is a different library. 2.13.x is current stable; a 2.14 alpha exists but isn't GA. |
-| SQLAlchemy | **2.0.x** (2.0.51) | The 2.0 style (`Mapped[]`, `select()`) is the baseline every block writes to. 2.1 is beta-only (`0b3`) as of this pin — do not adopt pre-GA. |
+| SQLAlchemy | **2.0.x** (2.0.51) | The 2.0 style (`Mapped[]`, `select()`) is the baseline every block writes to. 2.1 is beta-only (`0b2`) as of this pin — do not adopt pre-GA. |
 | Alembic | **1.18.x** | Tracks SQLAlchemy 2.0; current stable. |
 
 ## Backend — Django track
