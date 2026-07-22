@@ -13,12 +13,13 @@ How a starter-kit project's documentation stays true to the code as blocks, comp
 - The portable, co-located doc model
 - The root README template (canonical source)
 - Aggregation markers (canonical spec)
+- Doc fragment format (canonical spec)
 - The project CLAUDE.md template (canonical source)
 - "Ships its doc" is an acceptance bar
 
 ## The portable, co-located doc model
 
-Docs that live far from the code they describe go stale; docs generated once and never touched again go stale faster. So every template block, catalog component, and feature recipe ships a **doc fragment** co-located with its own files (its `README.md`, or the `## Doc fragment` section of a recipe) rather than a separate, hand-maintained project doc.
+Docs that live far from the code they describe go stale; docs generated once and never touched again go stale faster. So every template block, catalog component, and feature recipe ships a **doc fragment** co-located with its own files (its `docs/fragment.md` once materialized into a project — see "Doc fragment format" below — or the `## Doc fragment` section of a recipe) rather than a separate, hand-maintained project doc.
 
 - The fragment is **portable**: plain markdown, no dependency on where it ends up, written to slot into a larger document unchanged.
 - The fragment **travels with the code**: when a block or recipe is added to (or removed from) a project, its fragment comes with it.
@@ -95,6 +96,27 @@ This is the canonical spec for the anchor-marker pairs `just docs-generate` uses
 **Nesting.** Regions never nest. Within a section they are flat siblings, one per contributing block, in whatever order the generator writes them.
 
 **Region ownership.** Everything between a block's BEGIN and END marker is owned by the generator: it is fully regenerated from that block's own doc fragment on every `just docs-generate` run. Never hand-edit content inside a region directly — edit the block's own co-located `README.md` doc fragment instead, then regenerate. A hand-edit inside a region with no fragment behind it is silently overwritten on the next run.
+
+## Doc fragment format (canonical spec)
+
+This is the canonical spec for `docs/fragment.md` — the file a composed block or catalog component ships **co-located inside its own directory in the scaffolded project** (e.g. `apps/backend/docs/fragment.md`, `packages/api-client/docs/fragment.md`), which `just docs-generate` reads as the *input* it aggregates into the marker regions defined above. A block's authoring-time doc (`templates/<layer>/<name>/README.md` in this repo) is prose for a human browsing the template library; `docs/fragment.md` is the narrow, machine-parseable slice of that same information the generator actually consumes once the block is materialized into a project. A block missing its fragment simply contributes nothing — this is not an error (see "Zero-fragment safety" in the generator's own behavior), but it does fail the "ships its doc" acceptance bar below.
+
+**Header line.** The first non-blank line of the file is a full-line HTML comment identifying the block:
+
+```
+<!-- fragment: block:<layer>/<name> -->
+```
+
+`<layer>/<name>` matches the same id used in the aggregation markers (e.g. `backend/fastapi`, `packages/api-client`) — the generator uses it to know which id to wrap the fragment's contributed regions in. It must appear exactly once, on the first non-blank line; a missing or malformed header is a malformed-input error.
+
+**Sections.** After the header, the fragment holds zero or more of the following `##` sections, each at most once, in any order: `## Setup`, `## Deployment`, `## Maintenance`, `## Secrets`. A section absent from the fragment contributes nothing to that README section for this block — the generator does not emit an empty region for it.
+
+- `## Setup`, `## Deployment`, `## Maintenance` — free-form markdown, copied verbatim (minus the `##` heading line itself, and minus leading/trailing blank lines) into the block's BEGIN/END region under the matching root-README section.
+- `## Secrets` — table **rows only**, one per secret, `| NAME | used-by | where-to-get |`. No header row and no separator row: the root README's Secrets table header/separator is written once by the template itself (see "Secrets section specifics" above), and each block contributes rows inside its own region beneath it.
+
+Any `##` heading in the fragment other than these four is malformed input — the generator refuses (exit 2) rather than silently dropping or guessing at it. A fragment that repeats the same `##` section twice is likewise malformed.
+
+**Discovery.** `just docs-generate` discovers fragments by looking for `docs/fragment.md` one level under every directory in `apps/*` and `packages/*` at the project root, and processes them in a deterministic sort by block id — so aggregation output never depends on filesystem enumeration order. Two fragments declaring the same block id is a malformed-input error (ambiguous which one owns that id's regions).
 
 ## The project CLAUDE.md template (canonical source)
 

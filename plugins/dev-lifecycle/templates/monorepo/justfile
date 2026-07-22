@@ -46,16 +46,18 @@ build:
 client-generate:
     pnpm --filter @repo/api-client run generate
 
-# Deploy the project. Backed once an infra/devops block is scaffolded in.
+# Deploy the project. Unwired until an infra/devops block is scaffolded in
+# (epic #22 Stage 9) — fails loudly rather than silently no-opping, so a
+# real missed deploy can't be mistaken for a no-op success.
 deploy:
-    @echo "deploy: not wired yet — backed once a deployment target is scaffolded in (devops stage)." && exit 0
+    @echo "deploy is not wired yet — see the infra block (epic #22 Stage 9)." >&2 && exit 1
 
-# Regenerate the root README from every block's co-located doc fragment.
-# wired in Step 4 (docs aggregation script).
+# Regenerate the root README from every block's co-located doc fragment
+# (docs/fragment.md under apps/*/ and packages/*/ — see
+# references/authoring/documentation-standard.md).
 docs-generate:
-    @echo "docs-generate: not wired yet — lands in Stage 1 Step 4 (doc fragment aggregation script)." && exit 0
+    node scripts/docs-aggregate.mjs
 
 # Check the root README isn't stale relative to the doc fragments.
-# wired in Step 4 (docs aggregation script).
 docs-check:
-    @echo "docs-check: not wired yet — lands in Stage 1 Step 4 (doc fragment aggregation script)." && exit 0
+    node scripts/docs-aggregate.mjs --check
