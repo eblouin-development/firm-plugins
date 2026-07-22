@@ -46,7 +46,9 @@ jobs:
           fi
 
       - name: Set up Python
-        if: steps.py.outputs.present == 'true'
+        # Unconditional: semgrep below needs pip regardless of whether this
+        # repo has Python source (setup-python is the only thing standing
+        # between it and relying on ambient pip on the runner image).
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -55,8 +57,15 @@ jobs:
         if: steps.py.outputs.present == 'true'
         run: |
           pip install --disable-pip-version-check bandit==1.9.4
-          # -r recursive, -ll only medium+ severity/confidence, excludes tests/venvs.
-          bandit -r . -ll -x './.venv,./venv,./node_modules,./tests,./**/migrations'
+          # -r recursive; -ll reports medium+ severity only (severity and
+          # confidence are separate filters — confidence would be -i/-ii/-iii,
+          # not enabled here, so all confidence levels are still reported).
+          # -x excludes venvs/node_modules/tests/migrations; */migrations/*
+          # (not ./**/migrations) is required for nested dirs — bandit's -x
+          # matches via fnmatch.fnmatch(full_path, glob) plus a plain
+          # substring check, and neither matches files *under* a directory
+          # unless the glob itself has a trailing /* segment.
+          bandit -r . -ll -x './.venv,./venv,./node_modules,./tests,*/migrations/*'
 
       - name: semgrep (multi-language SAST)
         # Runs regardless of Python presence — semgrep covers JS/TS/etc too.
@@ -82,7 +91,11 @@ jobs:
           # gitleaks/gitleaks-action@v3: that Action requires a paid
           # GITLEAKS_LICENSE for org-owned repos scanning more than one
           # repo. The raw MIT-licensed binary needs no extra secret.
-          docker run --rm -v "${PWD}:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
+          # Pinned by digest (multi-arch index for v8.30.1, resolved via
+          # `docker buildx imagetools inspect`), not just tag, so the image
+          # can't move under the pin.
+          docker run --rm -v "${PWD}:/repo" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             git /repo --redact -v
 
   deps:
@@ -94,10 +107,15 @@ jobs:
       - name: Detect Python deps
         id: py
         run: |
-          if [ -f requirements.txt ] || [ -f pyproject.toml ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
+          if [ -f requirements.txt ]; then
+            echo "reqs=true" >> "$GITHUB_OUTPUT"
           else
-            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "reqs=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f pyproject.toml ]; then
+            echo "pyproject=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pyproject=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Detect pnpm deps
@@ -109,11 +127,38 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: pip-audit (Python)
-        if: steps.py.outputs.present == 'true'
+      - name: pip-audit (Python, requirements.txt)
+        if: steps.py.outputs.reqs == 'true'
         uses: pypa/gh-action-pip-audit@v1.1.0
         with:
           inputs: requirements.txt
+
+      - name: pip-audit (Python, uv-managed pyproject.toml)
+        # Firm-standard Python projects are uv + pyproject.toml with no
+        # committed requirements.txt (references/compatibility-matrix.md,
+        # Backend — Python), so the requirements.txt-input step above has
+        # nothing to read in that case. pip-audit doesn't parse
+        # pyproject.toml/uv.lock itself, so resolve the locked dependency
+        # set to a requirements file first, then audit that.
+        if: steps.py.outputs.reqs == 'false' && steps.py.outputs.pyproject == 'true'
+        run: |
+          pip install --disable-pip-version-check uv==0.11.31
+          # --frozen refuses to silently re-resolve/update uv.lock — a
+          # missing or stale lockfile fails loudly here instead of auditing
+          # a dependency set that doesn't match what's actually locked.
+          # --no-emit-project excludes the project's own (unpublished)
+          # package from the exported requirements.
+          uv export --frozen --no-emit-project --format requirements.txt -o /tmp/audit-reqs.txt || {
+            echo "::error::'uv export --frozen' failed — commit an up-to-date uv.lock (run 'uv lock') so the dependency-CVE gate has a locked dependency set to audit." >&2
+            exit 1
+          }
+          uvx pip-audit==2.10.1 -r /tmp/audit-reqs.txt
+
+      - name: Set up Node.js
+        if: steps.js.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
       - name: pnpm audit (JS/TS)
         if: steps.js.outputs.present == 'true'
@@ -165,26 +210,52 @@ jobs:
       - name: Detect Dockerfiles
         id: docker
         run: |
-          if [ -n "$(find . -iname 'Dockerfile*' -print -quit)" ]; then
+          # Capture every Dockerfile* path found (not just presence) — a
+          # project can have more than one (e.g. docker/Dockerfile.api,
+          # docker/Dockerfile.worker), each with its own build context.
+          mapfile -t files < <(find . -iname 'Dockerfile*' -not -path '*/node_modules/*' -not -path '*/.git/*' | sort)
+          if [ "${#files[@]}" -gt 0 ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "files<<DOCKERFILES_EOF"
+              printf '%s\n' "${files[@]}"
+              echo "DOCKERFILES_EOF"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
       # NOTE (inspection-only, not run here): building and scanning an image
-      # needs a real Docker build context and, for base-image CVE lookups,
-      # registry/network access this sandbox doesn't have. This step is
-      # correct as written and is what scaffolded projects run — it was
-      # verified by reading trivy-action's docs, not by executing it here.
-      - name: Build image
+      # needs a real Docker daemon and, for base-image CVE lookups,
+      # registry/network access this sandbox doesn't have (no dockerd socket
+      # in-sandbox). This step is correct as written and is what scaffolded
+      # projects run — verified by extracting this exact detect+build+scan
+      # shell logic into a scratch script against fixture Dockerfiles and
+      # echoing the constructed docker/trivy commands, not by executing them
+      # here. Trivy is installed via its own pinned install script (not
+      # aquasecurity/trivy-action) because each detected Dockerfile needs
+      # its own `docker build -f ... <context>` + `trivy image` pair inside
+      # one shell loop — a marketplace `uses:` step can't be looped, only a
+      # `run:` step can. Trivy core version pin unchanged from the matrix
+      # (0.70.0); only the installation mechanism changed.
+      - name: Install trivy
         if: steps.docker.outputs.present == 'true'
-        run: docker build -t security-gate-scan:${{ github.sha }} .
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.70.0
 
-      - name: trivy (image scan)
+      - name: Build and scan each Dockerfile
         if: steps.docker.outputs.present == 'true'
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: security-gate-scan:${{ github.sha }}
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: "1"
+        run: |
+          set -e
+          i=0
+          while IFS= read -r dockerfile; do
+            [ -z "$dockerfile" ] && continue
+            i=$((i + 1))
+            context="$(dirname "$dockerfile")"
+            tag="security-gate-scan:${{ github.sha }}-${i}"
+            echo "::group::docker build -f $dockerfile -t $tag $context"
+            docker build -f "$dockerfile" -t "$tag" "$context"
+            echo "::endgroup::"
+            echo "::group::trivy image $tag"
+            trivy image --format table --severity CRITICAL,HIGH --exit-code 1 "$tag"
+            echo "::endgroup::"
+          done <<< "${{ steps.docker.outputs.files }}"
