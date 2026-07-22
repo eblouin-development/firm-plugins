@@ -109,6 +109,8 @@ This is the canonical spec for `docs/fragment.md` — the file a composed block 
 
 `<layer>/<name>` matches the same id used in the aggregation markers (e.g. `backend/fastapi`, `packages/api-client`) — the generator uses it to know which id to wrap the fragment's contributed regions in. It must appear exactly once, on the first non-blank line; a missing or malformed header is a malformed-input error. The literal id `<layer>/<name>` is reserved for the empty-state sentinel (see "Sentinel lifecycle" above); a real fragment declaring it is malformed input.
 
+Because this header line is the fragment's *entire* metadata surface, fragments are **exempt from the plugin's `last-verified` freshness header** (the validator skips `docs/fragment.md` files): freshness for a block or component is carried by its authoring-time README, which does carry the header and is what the freshness audit reads.
+
 **Sections.** After the header, the fragment holds zero or more of the following `##` sections, each at most once, in any order: `## Setup`, `## Deployment`, `## Maintenance`, `## Secrets`. A section absent from the fragment contributes nothing to that README section for this block — the generator does not emit an empty region for it.
 
 - `## Setup`, `## Deployment`, `## Maintenance` — free-form markdown, copied verbatim (minus the `##` heading line itself, and minus leading/trailing blank lines) into the block's BEGIN/END region under the matching root-README section.
