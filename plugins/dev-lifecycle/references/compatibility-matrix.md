@@ -1,7 +1,7 @@
 <!--
 scope: cross-stack starter kit
 versions-covered: "Stage 0 kit-wide pin set, 2026-07"
-last-verified: 2026-07-21
+last-verified: 2026-07-22
 provenance: manual
 sources:
   - https://pypi.org/project/fastapi/
@@ -23,6 +23,11 @@ sources:
   - https://registry.terraform.io/providers/hashicorp/aws/latest
   - https://hub.docker.com/_/python
   - https://hub.docker.com/_/node
+  - https://www.npmjs.com/package/orval
+  - https://www.npmjs.com/package/@tanstack/react-query
+  - https://www.npmjs.com/package/eslint
+  - https://www.npmjs.com/package/typescript-eslint
+  - https://www.npmjs.com/package/prettier
 -->
 
 # Compatibility matrix
@@ -34,13 +39,15 @@ sources:
 - Backend — Python
 - Backend — Django track
 - Frontend / web
+- Client codegen
 - Mobile
+- Kit-wide lint & format tooling
 - Data
 - Infra
 - Containers
 
 ## Version check (do this first)
-Re-verify against official release notes/registries before bumping any line — recall is not a source. Two lines are deliberately held back from the newest available release; see the judgment calls inline. Re-run this check at least once a quarter or when a new template block is authored, whichever is sooner.
+Re-verify against official release notes/registries before bumping any line — recall is not a source. Three lines are deliberately held back from the newest available release; see the judgment calls inline. Re-run this check at least once a quarter or when a new template block is authored, whichever is sooner.
 
 ## Backend — Python
 | Dep | Pinned line | Why this line |
@@ -68,11 +75,24 @@ Re-verify against official release notes/registries before bumping any line — 
 | Vite | **8.x** (8.1.x) | Default bundler is now Rolldown (Rust) — faster cold start/HMR than Vite 7's Rollup default. |
 | Next.js (App Router) | **16.x** (16.2.x) | App Router is the only sensible default at this line (Pages Router is maintenance-mode); Turbopack is the default bundler for `dev` and `build`. |
 
+## Client codegen
+| Dep | Pinned line | Why this line |
+| --- | --- | --- |
+| orval | **8.22.x** (8.22.0) | Current stable (Jul 14 2026). Generates the shared `packages/api-client` from the backend's OpenAPI schema — React Query hooks over a custom `fetch` mutator, no axios (gate-1 locked choice). |
+| @tanstack/react-query | **5.101.x** (5.101.3) | Current v5 line. **Judgment call:** the true latest patch at verification time, 5.101.4, was published within pnpm 11's default `minimumReleaseAge` supply-chain window (packages published in roughly the last day are rejected by the workspace's lockfile policy check unless explicitly excluded) — 5.101.3 (one day older) clears it cleanly, so pin that instead of fighting the gate with a per-version exclusion that goes stale on the next bump. Re-check next quarter; by then 5.101.4+ will have aged out of the window on its own. |
+
 ## Mobile
 | Dep | Pinned line | Why this line |
 | --- | --- | --- |
 | Expo SDK | **57** | Current stable (released Jun 30 2026), ships React Native 0.86 as a small, non-breaking upgrade over SDK 56. **Judgment call:** teams wanting one more field-tested cycle can stay on SDK 56 (React Native 0.85) — both are acceptable; don't mix SDK versions within one app. |
 | React Native | **0.86** (via Expo SDK 57) | Pinned indirectly through the Expo SDK — don't hand-pin a bare React Native version inside an Expo-managed app. |
+
+## Kit-wide lint & format tooling
+| Dep | Pinned line | Why this line |
+| --- | --- | --- |
+| ESLint | **10.x** (10.7.0) | Current stable major (released Feb 2026); flat config (`eslint.config.mjs`) has been the default since ESLint 9 and continues unchanged into 10 — the monorepo skeleton's flat config from Step 1 needs no changes for this pin. **Judgment call:** this line was previously drafted as "9.x" before verification; 10.x was already current stable at pin time and typescript-eslint 8.65.x supports it (`peerDependencies.eslint: "^8.57.0 \|\| ^9.0.0 \|\| ^10.0.0"`), so pin the true current line rather than the stale draft value. |
+| typescript-eslint | **8.65.x** (8.65.0) | Current stable; supports both TypeScript 6.0.x (`peerDependencies.typescript: ">=4.8.4 <6.1.0"`) and ESLint 10 — the pair every TS package in the kit layers on top of the JS-only base config (see `eslint.config.mjs`'s own note). |
+| Prettier | **3.9.x** (3.9.6) | Current stable major; also orval's own formatting peer dependency (`peerDependencies.prettier: ">=3.0.0"`) for its generated output. |
 
 ## Data
 | Dep | Pinned line | Why this line |
