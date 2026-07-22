@@ -1,13 +1,13 @@
 <!--
 block: backend/fastapi
 needs:
-  - DATABASE_URL: async-driver scheme (postgresql+asyncpg:// prod, sqlite+aiosqlite:// tests) — see app/core/settings.py, app/core/db/session.py
-  - env vars: DATABASE_URL (required), ENVIRONMENT/DEBUG/CORS_ALLOWED_ORIGINS (optional)
+  - DATABASE_URL (required); ENVIRONMENT/DEBUG/CORS_ALLOWED_ORIGINS/RATE_LIMIT_*/SECURITY_HEADERS_*/JWT_SIGNING_KEY/SECRETS_BACKEND (optional, secure defaults — see "Security composition" + docs/fragment.md)
   - port: 8000 (uvicorn default)
   - Python 3.13.x + uv (no committed uv.lock — see pyproject.toml)
 exposes:
   - routes: GET/POST /items, GET/PATCH/DELETE /items/{id}, GET /health, GET /readyz, POST /auth/login|refresh (stub), GET /auth/me (stub)
   - the OpenAPI 3.1 contract (bearer security scheme) packages/api-client generates from
+  - security composition: security-headers/request-id-audit/rate-limiting/CORS wired by default
   - its co-located doc fragment: docs/fragment.md
 versions-pinned-to: references/compatibility-matrix.md
 last-verified: 2026-07-22
@@ -18,17 +18,20 @@ provenance: manual
 
 The FastAPI backend block: async FastAPI + SQLAlchemy 2.0 + Postgres, built
 on this catalog's locked backend components (error envelope, DB mixins,
-async session, generic repository, pagination, settings). Lives at
-`templates/backend/fastapi/` in this repo; scaffolding materializes it
-into a project's `apps/api/`. This is Stage 3's Step 2 (issue #26, epic
-#22) — the app skeleton, data layer, and contract endpoints. Security-
-component vendoring (CORS, security headers, rate limiting) is Step 3;
-OpenAPI export + Dockerfile/compose is Step 4 — both explicitly out of
-scope here, marked as `TODO` comments at their seams (see app/main.py).
+async session, generic repository, pagination, settings) and, as of Stage 3
+Step 3b (#26), the security-composition catalog (security headers, CORS
+lockdown, rate limiting, secrets loading, audit logging, input validation).
+Lives at `templates/backend/fastapi/` in this repo; scaffolding materializes
+it into a project's `apps/api/`. Step 2 (issue #26, epic #22) built the app
+skeleton, data layer, and contract endpoints; Step 3a hardened the vendored
+import packaging; Step 3b (this update) vendors and wires the security
+components. OpenAPI export + Dockerfile/compose (Step 4) is still out of
+scope here, marked as a `TODO` comment at its seam (see app/main.py).
 
 ## Contents
 - Composition contract
 - Vendored components
+- Security composition
 - App layout
 - Error contract
 - Auth stubs (Stage 5 seam)
@@ -89,9 +92,26 @@ does not re-derive or reimplement any of their logic:
 | `app/core/db/query.py` | `pagination/query.py` | `templates/components/backend/pagination/README.md` |
 | `app/core/db/schema.py` | `pagination/schema.py` | `templates/components/backend/pagination/README.md` |
 
-Security components (secrets-loading, input-validation, etc., under
-`templates/components/security/`) are **not** vendored yet — that's Step
-3's job, per this issue's scope split.
+**Security components (Stage 3 Step 3b, #26)** — the 6 baseline catalog
+components under `templates/components/security/`, each landed as its own
+subpackage under `app/core/security/`:
+
+| Vendored into | Sourced from | Component README |
+| --- | --- | --- |
+| `app/core/security/security_headers/{_core,fastapi}.py` | `security-headers/{_core,fastapi}.py` | `templates/components/security/security-headers/README.md` |
+| `app/core/security/cors_lockdown/{_core,fastapi}.py` | `cors-lockdown/{_core,fastapi}.py` | `templates/components/security/cors-lockdown/README.md` |
+| `app/core/security/rate_limiting/{_core,fastapi}.py` | `rate-limiting/{_core,fastapi}.py` | `templates/components/security/rate-limiting/README.md` |
+| `app/core/security/secret_store/secret_store.py` | `secrets-loading/secret_store.py` | `templates/components/security/secrets-loading/README.md` |
+| `app/core/security/audit_logging/audit.py` | `audit-logging/audit.py` | `templates/components/security/audit-logging/README.md` |
+| `app/core/security/input_validation/validation.py` | `input-validation/validation.py` | `templates/components/security/input-validation/README.md` |
+
+`webhook-signature` and `idempotency` (also in the component catalog, under
+`templates/components/security/`) are **deliberately not vendored** here —
+both are payments-shaped concerns (verifying an inbound webhook's
+signature; deduplicating a retried mutating request) with no consumer yet
+in this block. The Stage 11 payments recipe vendors and wires them
+alongside whatever payments endpoint actually needs them, rather than this
+block guessing at that wiring ahead of time.
 
 **Kept in sync via the weekly freshness audit** (Stage 12, #35): each
 vendored file's header note names its source path; the audit diffs the
@@ -117,9 +137,122 @@ each carries a `DRIFT:` header line noting the adaptation, since this
 means those two files are no longer byte-identical to their
 component-catalog source below the header. `app/core/db/mixins.py`,
 `session.py`, and `schema.py` have no cross-imports to adapt and stay
-byte-identical. Step 3b's security components follow the same invariant:
-each one copied into `app/core/security/<name>/` as its own subpackage,
-relative imports only, no `sys.path.insert` anywhere in the app.
+byte-identical.
+
+**Step 3b's security components follow the same invariant.** Three of the
+six (`security_headers`, `cors_lockdown`, `rate_limiting`) pair a `_core.py`
+with a `fastapi.py` the source component ships importing via a bare
+`import _core` (the same flat, directory-local sibling-import convention
+`db-mixins`/`pagination` use); each `fastapi.py`'s import is rewritten to
+`from . import _core` (package-relative), with a one-line `DRIFT:` header
+note — the rest of each file, including every other `_core.<name>`
+reference, is untouched. The other three (`secret_store`, `audit_logging`'s
+`audit.py`, `input_validation`) ship as a single flat file with no
+cross-import to adapt, so they stay byte-identical below their header —
+they still land as their own subpackage directory (not a bare
+`app/core/security/<file>.py` module) purely for a consistent,
+self-contained-subpackage shape across `app/core/security/`, matching the
+five components that do have a cross-import to isolate. Every subpackage's
+`__init__.py` is new glue (not vendored), re-exporting that component's
+public names the same way `app/core/db/__init__.py` does — see each
+subpackage's own `__init__.py` docstring.
+
+`app/core/security/audit_logging/middleware.py` is also new glue, not a
+vendored file: `audit.py`'s own README documents `bind_request_id()`/
+`reset_request_id()` as a hook "for Step 3 middleware" but ships no
+middleware itself (the component is framework-neutral). This file is that
+Step 3 middleware for FastAPI — see "Security composition" below.
+
+## Security composition
+
+Four of the six vendored security components are wired as middleware in
+`app/main.py`'s `create_app()`; `secret_store` and `input_validation` are
+library code composed at the point of use instead (see below). All four
+middlewares are on by default — nothing to opt into.
+
+**Middleware order, OUTERMOST -> INNERMOST (this order is load-bearing —
+see the "why" after the table):**
+
+| # | Middleware | Wraps | Why here |
+| --- | --- | --- | --- |
+| 1 | `security_headers.SecurityHeadersMiddleware` | everything | Runs last on the way OUT, so it sets/overwrites headers on every response any lower layer produces — a rate-limit 429, a CORS preflight reply, a routed handler's normal response — none of which can suppress these headers by building their own response object. |
+| 2 | `audit_logging.RequestIDMiddleware` | rate-limiting, CORS, routing | Binds the request id into `audit.py`'s contextvar BEFORE rate-limiting runs, so a rate-limit denial's own audit trail (today: none — a future stage that adds one gets the id automatically) and every downstream `audit_event()` call already carry it. |
+| 3 | `rate_limiting.RateLimitMiddleware` | CORS, routing | Pre-auth (this app has no real authentication yet — Stage 5, #28), general per-client-IP ceiling. Runs OUTSIDE CORS deliberately: a cross-origin preflight `OPTIONS` still consumes rate-limit budget even though it never reaches CORS's own allow/deny decision, so an attacker can't use preflights to bypass the ceiling. |
+| 4 (innermost) | `cors_lockdown.add_cors` (Starlette's own `CORSMiddleware`) | routing | Closest to the router/exception handlers. Deny-by-default — see below. |
+
+**Why this order, mechanically:** Starlette's `add_middleware()` prepends
+to its internal list and builds the runtime stack by iterating that list in
+**reverse** (verified against this project's pinned Starlette:
+`add_middleware` does `self.user_middleware.insert(0, ...)`;
+`build_middleware_stack` does `for cls, ... in reversed(middleware): app =
+cls(app, ...)`). The practical consequence `app/main.py`'s own comments
+call out at each call site: the middleware added **last** ends up
+**outermost**. `create_app()` therefore calls `add_cors()` first (call 1 of
+4), then `RateLimitMiddleware`, then `RequestIDMiddleware`, then
+`add_security_headers()` last (call 4 of 4) — the reverse of the
+outermost-to-innermost table above.
+
+**CORS: deny-by-default, wired conditionally.** `CORSPolicy.__init__`
+itself refuses to construct with an empty `allow_origins` (see
+`cors_lockdown/README.md`'s explicit-allowlist posture) — there is no "deny
+everything" policy object to build. `create_app()` treats an empty
+`cors_allowed_origins` (the secure default both `AppSettings` and this
+project's `Settings` inherit) as "add no `CORSMiddleware` at all" rather
+than trying to construct one: with no `CORSMiddleware` in the stack, no
+`Access-Control-Allow-Origin` header is ever sent, so a browser blocks
+every cross-origin JS request regardless — the same practical outcome as
+an explicit empty-allowlist policy, without hitting `CORSPolicy`'s
+construction-time guard on every dev/test boot where no origins are
+configured yet. Set `CORS_ALLOWED_ORIGINS` (a JSON array in `.env`/env, per
+`AppSettings`) to the exact origin(s) this environment's frontend is served
+from to turn CORS on.
+
+**Rate limiting: secure defaults, one in-memory store per app instance.**
+`Settings.rate_limit_capacity` (default 60) / `rate_limit_refill_per_second`
+(default 1.0) / `rate_limit_trusted_hops` (default **0** — distrust
+`X-Forwarded-For` entirely, per `rate_limiting/_core.py`'s `client_ip_key`)
+configure a single `InMemoryBucketStore` created per `create_app()` call.
+Per-process, like the component's own README documents — a multi-worker/
+multi-replica deployment gets a looser *effective* ceiling than the
+configured numbers alone suggest; a Stage 11 Redis-backed `BucketStore`
+closes that gap without either this wiring or the component's own code
+changing (same `BucketStore` Protocol). Set `RATE_LIMIT_TRUSTED_HOPS` to
+the exact number of trusted reverse proxies in front of this app, per
+environment, once that topology is confirmed — never guessed, and never
+left above 0 without confirming it (a wrong value lets a client spoof its
+own rate-limit key via a forged header).
+
+**Secrets composition (`secret_store`).** Not middleware — a library
+`app/core/config.py`'s `Settings` composes directly, per the exact pattern
+`app/core/settings.py`'s own module docstring documents (subclass
+`AppSettings`, wire a field's `default_factory` to `secret_store.
+get_secret(...)`). This block's one concrete example:
+`Settings.jwt_signing_key`, resolved via `get_secret("JWT_SIGNING_KEY",
+required=False)` — `required=False` and no invented fallback value,
+deliberately: nothing in this app consumes the key yet (Stage 5, #28, wires
+real JWT issuance), so making it required would break every existing test
+and the plain dev boot, neither of which sets `JWT_SIGNING_KEY` today, and
+hard-coding a placeholder "secret" value is exactly what this seam exists
+to avoid. `SECRETS_BACKEND=aws-secrets-manager` (consulted directly by
+`secret_store.py` from process env, independent of `Settings`) opts into
+the AWS Secrets Manager fallback layer for this and any future
+`get_secret()` call in this app — see `secrets-loading/README.md`'s
+"Layered resolution".
+
+**Input validation (`input_validation`).** Not middleware either —
+`StrictModel` is the base `app/schemas/item.py`'s `ItemBase`/`ItemUpdate`
+now extend, giving `ItemCreate`/`ItemUpdate`/`ItemOut` `extra="forbid"` +
+`str_strip_whitespace` + `validate_assignment` + `strict=True` in place of
+the earlier ad hoc `ConfigDict(extra="forbid")`. Item's own fields stay
+plain `str`/`Field(min_length=..., max_length=...)` rather than adopting
+`SafeText`/`ShortStr` — those add a `no_control_chars` check this generic
+"widget name" exemplar has no documented need for; a real project's own
+free-text fields (descriptions, comments) are where those types belong —
+see `app/schemas/item.py`'s own module docstring.
+
+**Not wired: `webhook_signature`, `idempotency`.** See "Vendored
+components" above — both stay unvendored until the Stage 11 payments
+recipe has an actual endpoint that needs them.
 
 ## App layout
 
@@ -143,6 +276,14 @@ app/
       repository.py              # vendored AsyncRepository
       query.py                    # vendored paginate_select
       schema.py                    # vendored PageParams/Page/PageResult
+    security/
+      __init__.py                  # package marker (see its own docstring)
+      security_headers/              # vendored _core.py + fastapi.py, __init__.py re-exports
+      cors_lockdown/                 # vendored _core.py + fastapi.py, __init__.py re-exports
+      rate_limiting/                 # vendored _core.py + fastapi.py, __init__.py re-exports
+      secret_store/                  # vendored secret_store.py, __init__.py re-exports
+      audit_logging/                 # vendored audit.py + NEW middleware.py (RequestIDMiddleware)
+      input_validation/              # vendored validation.py, __init__.py re-exports
   models/
     __init__.py            # aggregator: imports every model (Item today) so nothing is missed by migrations/tests
     item.py               # the Item ORM model (contract exemplar)
@@ -241,6 +382,28 @@ block does **not** duplicate each vendored component's own unit tests
 (`error-envelope/tests/`, `repository/tests/`, ...) inside `app/` — see
 "Judgment calls" for why.
 
+`tests/test_security_composition.py` (Stage 3 Step 3b, #26) proves the
+security-composition wiring in `app/main.py`'s `create_app()` against real
+request/response behavior: security headers present on a normal response
+(and HSTS present only over an explicit `https://` request, absent over
+plain `http`); CORS preflight allowing a configured origin, rejecting a
+disallowed one, and not being wired at all when no origins are configured;
+rate limiting returning 429 with `Retry-After` once a tiny configured burst
+is exhausted, and that denial still carrying the outer middlewares' own
+headers (`X-Request-ID`, security headers); request-id binding proven
+directly against `RequestIDMiddleware` + `audit_event()` (a minted or
+reflected `X-Request-ID`, a malformed inbound id replaced rather than
+trusted, and the audit contextvar actually carrying the same id during the
+request and unbound after); and `StrictModel`'s adoption in
+`app/schemas/item.py` rejecting an unknown field on `PATCH` and a wrong
+JSON type on `POST`, plus a standalone sanity check that the app's actual
+imported `StrictModel` rejects a numeric string for an `int` field under
+`strict=True` (Item's own fields are str-only, so that specific
+strict-vs-lax behavior isn't otherwise observable over this block's HTTP
+surface). Uses the `make_client` factory fixture (`tests/conftest.py`) to
+build a bespoke `Settings()` per test rather than mutating process env
+vars or sleeping in real time for the rate-limit burst.
+
 Run: `uv run --python 3.13 --with fastapi --with 'sqlalchemy[asyncio]==2.0.*' --with aiosqlite --with 'pydantic==2.13.*' --with pydantic-settings --with alembic --with httpx --with pytest --with pytest-asyncio -- pytest tests -q`
 
 Or, once materialized into a project: `uv sync --all-groups && uv run pytest`.
@@ -305,3 +468,63 @@ Or, once materialized into a project: `uv sync --all-groups && uv run pytest`.
   verification.** See "Database & migrations" above — the sandbox only had
   a startable 16 cluster; nothing in this block's schema is 18-specific,
   but this is a noted gap, not a substitute for an eventual 18 run.
+- **`create_app()` now resolves `Settings()` at app-CONSTRUCTION time, not
+  only inside `lifespan` (Stage 3 Step 3b, #26).** Step 2's `lifespan`
+  deliberately deferred `get_settings()` to ASGI-startup time specifically
+  so a missing `DATABASE_URL` wouldn't fail at plain module import (letting
+  tooling introspect the app/schema without a real database configured).
+  Wiring CORS/rate-limiting/security-header config from `Settings` requires
+  a `Settings` instance at the point `create_app()` builds the middleware
+  stack, which now runs at import time too (`app = create_app()` at this
+  module's bottom) — so that specific "import never needs `DATABASE_URL`"
+  guarantee no longer holds. Judged an acceptable, intentional narrowing
+  (fail-fast now happens even earlier — at construction — rather than
+  later, at first request), not a regression, and it's the common
+  FastAPI pattern of constructing settings at module scope. `create_app()`
+  gained a `settings:` override parameter as the escape hatch tooling/tests
+  need instead — see its own docstring and `tests/conftest.py`'s
+  `make_client` fixture.
+- **Rate limiting wraps CORS, not the other way around.** The middleware-
+  order table under "Security composition" states this; the reason is
+  narrower than "arbitrary but documented": a cross-origin preflight
+  `OPTIONS` request still consumes rate-limit budget under this order even
+  though it never reaches CORS's own allow/deny decision, closing off using
+  preflights specifically to burn through the ceiling for free. The
+  alternative order (CORS outside rate-limiting) would let an attacker send
+  unlimited preflights from a disallowed origin at zero rate-limit cost,
+  since CORS would reject them before rate-limiting ever saw them.
+- **`jwt_signing_key` is `required=False` with no fallback value, not
+  `required=True` with no default (`AppSettings`' own usual "no default
+  means required" convention).** Making it required would fail `Settings()`
+  construction — now happening at app-construction/import time, see above —
+  for every existing test and the plain dev boot, none of which set
+  `JWT_SIGNING_KEY` today (Stage 5, #28, is what will actually consume this
+  field). A hard-coded insecure-but-non-empty fallback was considered and
+  rejected: this issue's own instructions say "don't invent secrets," and a
+  fabricated default value is exactly that, even labeled "dev-only" — the
+  risk of it silently surviving into a real deployment isn't worth avoiding
+  an `Optional[str]` return type here.
+- **`X-Request-ID`, if client-supplied, is trusted and reflected (bounded to
+  a short, printable-ASCII, no-control-character shape) rather than always
+  minted fresh.** This is deliberately a DIFFERENT trust posture than
+  rate-limiting's `X-Forwarded-For` handling: a request-id is a correlation
+  id for tracing, not a security/access decision, so reflecting a
+  caller-supplied value back is safe and useful (a client can correlate its
+  own logs with this app's). It's still attacker-influenced input reaching
+  a response header and every `audit_event()` in the request, so it's
+  shape-validated (`audit_logging/middleware.py`'s `_SAFE_REQUEST_ID_RE`)
+  before being trusted — a value that doesn't match gets a freshly minted
+  `uuid4` instead of a "sanitized" version of the bad one.
+- **No API-boundary field in this block's own schemas demonstrates
+  `StrictModel`'s strict-mode numeric-coercion rejection.** `Item`'s fields
+  are all `str`/`str | None` — Pydantic already rejects a JSON number for a
+  `str` field even in lax (non-strict) mode, so POSTing `{"name": 123}`
+  doesn't isolate what `strict=True` specifically adds over the old ad hoc
+  `ConfigDict(extra="forbid")`. Adding an `int`/`bool` field to `Item`
+  purely to exercise this would be exactly the over-refactoring this step's
+  instructions warn against for a generic exemplar model. Resolved by
+  pairing an API-boundary test (wrong JSON type, still meaningful) with one
+  direct, non-API test against this app's actual imported `StrictModel`
+  class proving the numeric-string-for-`int` rejection — see
+  `tests/test_security_composition.py`'s
+  `test_strict_model_rejects_numeric_string_for_an_int_field`.

@@ -33,14 +33,15 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
 
-from collections.abc import AsyncIterator, Iterator  # noqa: E402
-from contextlib import asynccontextmanager  # noqa: E402
+from collections.abc import AsyncIterator, Callable, Iterator  # noqa: E402
+from contextlib import ExitStack, asynccontextmanager  # noqa: E402
 
 import pytest  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from app.core.config import Settings  # noqa: E402
 from app.core.db import Base, configure_engine, get_engine  # noqa: E402
 from app.core.db.session import _reset_engine_for_tests  # noqa: E402
 from app.main import create_app  # noqa: E402
@@ -70,3 +71,32 @@ def client() -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     _reset_engine_for_tests()
+
+
+@pytest.fixture()
+def make_client() -> Iterator[Callable[..., TestClient]]:
+    """Factory fixture (Stage 3 Step 3b, #26) for tests that need a bespoke
+    `Settings()` — a tiny `rate_limit_capacity` to trigger 429 without a
+    real time delay, a specific `cors_allowed_origins` to test allow/deny,
+    etc. — rather than the `client` fixture's fixed defaults. See
+    tests/test_security_composition.py.
+
+    `**settings_overrides` are passed straight to `Settings(...)`;
+    `database_url` is always the hermetic in-memory sqlite URL (never
+    overridable here — this fixture is about security config, not the DB).
+    Call `_make()` at most ONCE per test: like the `client` fixture, this
+    reconfigures the one process-global engine (app/core/db/session.py has
+    no concept of multiple concurrent engines), so a second call within the
+    same test would silently repoint the first client's already-created app
+    at a fresh, empty database.
+    """
+    with ExitStack() as stack:
+
+        def _make(**settings_overrides: object) -> TestClient:
+            configure_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+            stack.callback(_reset_engine_for_tests)
+            settings = Settings(database_url="sqlite+aiosqlite://", **settings_overrides)
+            app = create_app(lifespan_ctx=_test_lifespan, settings=settings)
+            return stack.enter_context(TestClient(app))
+
+        yield _make
