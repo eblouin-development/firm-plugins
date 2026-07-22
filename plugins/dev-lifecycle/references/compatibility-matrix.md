@@ -6,6 +6,9 @@ provenance: manual
 sources:
   - https://pypi.org/project/fastapi/
   - https://pypi.org/project/pydantic/
+  - https://pypi.org/project/pydantic-settings/
+  - https://pypi.org/project/asyncpg/
+  - https://pypi.org/project/uvicorn/
   - https://www.sqlalchemy.org/blog/2026/04/16/sqlalchemy-2.1.0b2-released/
   - https://alembic.sqlalchemy.org/en/latest/changelog.html
   - https://www.djangoproject.com/download/
@@ -67,8 +70,11 @@ Re-verify against official release notes/registries before bumping any line — 
 | Python | **3.13.x** | Latest stable with a mature C-extension/wheel ecosystem; 3.14 (released Oct 2025) is current but young for some third-party wheels — reassess next quarter. |
 | FastAPI | **0.139.x** | Latest release line (0.139.2, Jul 2026); still pre-1.0, so pin the minor, not just the major. |
 | Pydantic | **v2, 2.13.x** | Pydantic v2 only — v1 is a different library. 2.13.x is current stable; a 2.14 alpha exists but isn't GA. |
+| pydantic-settings | **2.14.x** (2.14.2) | Current stable (PyPI, Jun 19 2026); `BaseSettings` was split out of Pydantic core at v2 (see `references/backend/pydantic.md`'s "Settings & secrets"). Requires `pydantic>=2.7.0` — compatible with this matrix's Pydantic 2.13.x pin above; the two version lines float independently. Used by `templates/components/backend/settings/`. |
 | SQLAlchemy | **2.0.x** (2.0.51) | The 2.0 style (`Mapped[]`, `select()`) is the baseline every block writes to. 2.1 is beta-only (`0b2`) as of this pin — do not adopt pre-GA. |
 | Alembic | **1.18.x** | Tracks SQLAlchemy 2.0; current stable. |
+| asyncpg | **0.31.x** (0.31.0) | Current stable (PyPI, Nov 24 2025). The async PostgreSQL driver `db-session/`'s `configure_engine()` expects behind a `postgresql+asyncpg://` DATABASE_URL — see that component's fail-fast scheme guard. Added by Stage 3 Step 2 (#26), which is the first block to actually need a real async DB driver rather than just the ORM layer. |
+| uvicorn | **0.51.x**, `uvicorn[standard]` extra | Current stable (PyPI, Jul 8 2026). ASGI server this block's `app.main:app` runs under; the `standard` extra pulls in `uvloop`/`httptools` for production-grade performance. Added by Stage 3 Step 2 (#26) alongside asyncpg, for the same reason. |
 
 ## Backend — Django track
 | Dep | Pinned line | Why this line |
@@ -123,6 +129,8 @@ Re-verify against official release notes/registries before bumping any line — 
 | --- | --- | --- |
 | Python base image | **`python:3.13-slim-bookworm`** | Matches the Python pin above; explicit Debian codename (not floating `slim`) for reproducible builds. |
 | Node base image | **`node:24-bookworm-slim`** | Matches the Node LTS pin above; Bookworm remains in full support through 2026+. |
+| Postgres image (dev compose) | **`postgres:18-bookworm`** | Matches the "Data" row's PostgreSQL 18.x pin, Bookworm-based for consistency with the two rows above. Used by `templates/backend/fastapi/docker-compose.yml` (Stage 3 #26, Step 4's dev-run seam). **Judgment call:** a sandboxed/offline verification environment without registry access may only have Postgres 16 installed locally (`pg_ctlcluster`) to prove the alembic/asyncpg path against directly — that's a verification-environment substitute, not a repin of this compose file, which stays on the matrix's real 18.x line. |
+| uv base image (Dockerfile) | **`ghcr.io/astral-sh/uv:0.11.31`** | Same uv version already pinned above ("Security tooling" row, for CI's `deps` job) — one uv version across the kit rather than a Docker-only drift. `templates/backend/fastapi/Dockerfile` copies the `uv`/`uvx` binaries out of this image via `COPY --from=`, per uv's own documented Docker integration pattern. |
 
 ## Security tooling (CI scanners)
 The pin set `assets/workflows/security.yml` (the firm's security-gate workflow, `references/security/secure-baseline.md`'s CI-scanning section) runs against. Each tool's **binary/CLI** is invoked at an exact pinned version so a gate's pass/fail is reproducible run to run — that part is not a moving target. **Caveat:** semgrep's two rulesets (`p/ci`, `p/owasp-top-ten`) are pulled live from Semgrep's public registry on every run and are *not* pinned — they float by design, since a pinned/vendored ruleset would mean either a Semgrep AppSec Platform login (to pull a fixed registry snapshot) or hand-maintaining the rule set ourselves. Accepted tradeoff for staying unauthenticated on `GITHUB_TOKEN` only: the semgrep binary version is reproducible, its finding set is not.
