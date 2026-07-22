@@ -175,7 +175,7 @@ see the "why" after the table):**
 
 | # | Middleware | Wraps | Why here |
 | --- | --- | --- | --- |
-| 1 | `security_headers.SecurityHeadersMiddleware` | everything | Runs last on the way OUT, so it sets/overwrites headers on every response any lower layer produces — a rate-limit 429, a CORS preflight reply, a routed handler's normal response — none of which can suppress these headers by building their own response object. |
+| 1 | `security_headers.SecurityHeadersMiddleware` | everything | Runs last on the way OUT, so it sets/overwrites headers on every response any lower layer produces — a rate-limit 429, a CORS preflight reply, a routed handler's normal response — none of which can suppress these headers by building their own response object. **Exception:** the catch-all `Exception`/500 handler is pulled out by Starlette and run by `ServerErrorMiddleware`, OUTSIDE this middleware entirely — `app/main.py`'s handler stamps the identical `SecurityHeadersPolicy` output (and the bound `x-request-id`) onto that response directly, so the 500 still carries them, just not via this middleware. See `_make_unhandled_exception_handler`'s docstring in `app/main.py`. |
 | 2 | `audit_logging.RequestIDMiddleware` | rate-limiting, CORS, routing | Binds the request id into `audit.py`'s contextvar BEFORE rate-limiting runs, so a rate-limit denial's own audit trail (today: none — a future stage that adds one gets the id automatically) and every downstream `audit_event()` call already carry it. |
 | 3 | `rate_limiting.RateLimitMiddleware` | CORS, routing | Pre-auth (this app has no real authentication yet — Stage 5, #28), general per-client-IP ceiling. Runs OUTSIDE CORS deliberately: a cross-origin preflight `OPTIONS` still consumes rate-limit budget even though it never reaches CORS's own allow/deny decision, so an attacker can't use preflights to bypass the ceiling. |
 | 4 (innermost) | `cors_lockdown.add_cors` (Starlette's own `CORSMiddleware`) | routing | Closest to the router/exception handlers. Deny-by-default — see below. |
@@ -211,8 +211,13 @@ from to turn CORS on.
 `Settings.rate_limit_capacity` (default 60) / `rate_limit_refill_per_second`
 (default 1.0) / `rate_limit_trusted_hops` (default **0** — distrust
 `X-Forwarded-For` entirely, per `rate_limiting/_core.py`'s `client_ip_key`)
-configure a single `InMemoryBucketStore` created per `create_app()` call.
-Per-process, like the component's own README documents — a multi-worker/
+configure a single `InMemoryBucketStore` created per `create_app()` call,
+constructed with `max_keys=50_000` — an explicit, bounded cap on top of the
+store's own idle-eviction (`ttl_seconds`, default 900s), so a burst of
+high-cardinality keys within one TTL window (e.g. a spoofed-IP flood) can't
+grow the in-memory dict without bound; the store evicts the oldest-by-
+last-seen bucket once the cap is hit. Per-process, like the component's own
+README documents — a multi-worker/
 multi-replica deployment gets a looser *effective* ceiling than the
 configured numbers alone suggest; a Stage 11 Redis-backed `BucketStore`
 closes that gap without either this wiring or the component's own code

@@ -63,3 +63,30 @@ def test_unhandled_exception_returns_enveloped_500_without_leaking_message(
     assert body["error"]["details"] is None
     assert _CRASH_MESSAGE not in body["error"]["message"]
     assert "RuntimeError" not in body["error"]["message"]
+
+
+def test_unhandled_exception_500_carries_security_headers_and_request_id(
+    crashing_client: TestClient,
+) -> None:
+    """Stage 3 review fix (MEDIUM): `SecurityHeadersMiddleware` and
+    `RequestIDMiddleware` both sit INSIDE `ServerErrorMiddleware` (see
+    app/main.py's `_make_unhandled_exception_handler` docstring), so a
+    catch-all 500 never passes through either on the way out. This pins
+    that `app/main.py`'s handler stamps the same headers itself instead —
+    the fix must not regress silently."""
+    response = crashing_client.get("/__test_only_crash")
+
+    assert response.status_code == 500
+    # Headers `SecurityHeadersPolicy.build_headers()` sets unconditionally
+    # (HSTS is deliberately excluded — TestClient's default base_url is
+    # plain http://testserver, so `is_https` is False and HSTS correctly
+    # stays absent, same as it would for any other plain-HTTP response).
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert "content-security-policy" in response.headers
+    assert "permissions-policy" in response.headers
+    assert "strict-transport-security" not in response.headers
+    # RequestIDMiddleware bound a request id into scope["state"] before the
+    # crashing route ran; the 500 handler reads it back and sets it here.
+    assert response.headers["x-request-id"]

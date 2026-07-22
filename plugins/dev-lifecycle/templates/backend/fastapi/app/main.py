@@ -30,13 +30,22 @@ runtime. The calls in this factory are therefore ordered bottom-to-top
 relative to the prose here -- read the code comments at each call site for
 the "call N of 4" position.**
 
-1. **security-headers (OUTERMOST).** Runs first on the way in and, more
-   importantly, LAST on the way out -- it gets to set/overwrite headers on
-   every response this app ever produces, including a lower layer's own
-   response (rate-limiting's 429, CORS's preflight reply, a routed
-   handler's normal response). Nothing downstream can suppress these
-   headers by constructing its own response object, because this layer
-   runs after all of them on the response path.
+1. **security-headers (OUTERMOST of the `add_middleware()` stack).** Runs
+   first on the way in and, more importantly, LAST on the way out -- it
+   gets to set/overwrite headers on every response any of THIS app's own
+   `add_middleware()` layers produce (rate-limiting's 429, CORS's preflight
+   reply, a routed handler's normal response). Nothing downstream of it can
+   suppress these headers by constructing its own response object, because
+   this layer runs after all of them on the response path. One path sits
+   OUTSIDE even this: a handler registered for the base `Exception` class
+   (this app's catch-all 500) is pulled out by Starlette's own
+   `build_middleware_stack()` and given to `ServerErrorMiddleware`, which
+   that same method places outside every `add_middleware()` layer,
+   including this one -- see `_make_unhandled_exception_handler`'s
+   docstring below for the mechanics. That handler therefore stamps the
+   same `SecurityHeadersPolicy` output (and the bound request id) onto the
+   500 response itself, so "every response" stays true for that path too,
+   just via a second, explicit call site rather than this middleware.
 2. **request-id / audit binding.** Binds a per-request id (inbound
    `X-Request-ID` if shape-valid, else a fresh `uuid4` --
    audit_logging/middleware.py) into audit.py's contextvar BEFORE
@@ -64,7 +73,7 @@ the "call N of 4" position.**
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -139,23 +148,67 @@ def _app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content=exc.to_envelope().model_dump(mode="json"))
 
 
-def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """JUDGMENT CALL (not explicitly required by Step 2's task list, added
-    for defense-in-depth): catches anything that reaches here having
-    escaped both handlers above — a genuine bug, not a deliberate AppError
-    raise. error-envelope/errors.py's own module docstring describes this
-    exact case ("an unhandled bug ... the framework's generic 500 handler
-    still catches, mapping to this same base's to_envelope()"), so this
-    keeps that promise literally true instead of leaving FastAPI's raw
-    default 500 (a bare traceback in dev, an unenveloped generic message in
-    prod) as the one place the app's error contract doesn't hold. Per
-    references/backend/fastapi.md's "Validation & error handling" ("Never
-    leak stack traces... return a safe message"), the client sees only
-    `AppError`'s default internal-error message — never `str(exc)`."""
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content=AppError().to_envelope().model_dump(mode="json"),
-    )
+def _make_unhandled_exception_handler(
+    security_headers_policy: SecurityHeadersPolicy,
+) -> Callable[[Request, Exception], JSONResponse]:
+    """Returns the catch-all `Exception` handler, closed over the SAME
+    `SecurityHeadersPolicy` instance `create_app()` wires into
+    `SecurityHeadersMiddleware` below — so a 500 gets the identical header
+    set (including whatever `hsts_preload` this environment is configured
+    with) a normal response would, not a second, drifted default.
+
+    FIX (Stage 3 review, MEDIUM): a handler registered for the base
+    `Exception` class is pulled out by Starlette's own
+    `Starlette.build_middleware_stack()` (see `key in (500, Exception)`) and
+    handed to `ServerErrorMiddleware`, which that same method places
+    OUTERMOST — *outside every `add_middleware()` call this app makes*,
+    including `security_headers`, `RequestIDMiddleware`, and
+    `RateLimitMiddleware`. Concretely: `middleware = [ServerErrorMiddleware,
+    *user_middleware, ExceptionMiddleware]`, and the runtime stack wraps
+    from the router outward through `reversed(middleware)` — so
+    `ServerErrorMiddleware` is the LAST thing built, i.e. the outermost ASGI
+    app. An exception that reaches this handler has therefore already
+    unwound past `SecurityHeadersMiddleware`'s own `send_wrapper` (see
+    `security_headers/fastapi.py`) without it ever running — that
+    middleware's "sets headers on every response, even a lower layer's own"
+    guarantee (module docstring, point 1) does NOT hold for this one path
+    unless this handler stamps the same headers itself. Same reasoning for
+    `x-request-id`: `RequestIDMiddleware` sits inside `ServerErrorMiddleware`
+    too, so its own `send_wrapper` never gets to set the header on this
+    response either — but it DID already bind the id into
+    `scope["state"]["request_id"]` before the downstream exception was
+    raised (see `audit_logging/middleware.py`), so that value is read back
+    here instead of re-derived."""
+
+    def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """JUDGMENT CALL (not explicitly required by Step 2's task list,
+        added for defense-in-depth): catches anything that reaches here
+        having escaped both handlers above — a genuine bug, not a
+        deliberate AppError raise. error-envelope/errors.py's own module
+        docstring describes this exact case ("an unhandled bug ... the
+        framework's generic 500 handler still catches, mapping to this same
+        base's to_envelope()"), so this keeps that promise literally true
+        instead of leaving FastAPI's raw default 500 (a bare traceback in
+        dev, an unenveloped generic message in prod) as the one place the
+        app's error contract doesn't hold. Per references/backend/
+        fastapi.md's "Validation & error handling" ("Never leak stack
+        traces... return a safe message"), the client sees only
+        `AppError`'s default internal-error message — never `str(exc)`.
+        The envelope body is unchanged by this function's header-stamping
+        fix above."""
+        response = JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=AppError().to_envelope().model_dump(mode="json"),
+        )
+        headers = security_headers_policy.build_headers(is_https=request.url.scheme == "https")
+        for name, value in headers.items():
+            response.headers[name] = value
+        request_id = request.scope.get("state", {}).get("request_id")
+        if request_id:
+            response.headers["x-request-id"] = request_id
+        return response
+
+    return _unhandled_exception_handler
 
 
 def create_app(*, lifespan_ctx=lifespan, settings: Settings | None = None) -> FastAPI:
@@ -178,6 +231,13 @@ def create_app(*, lifespan_ctx=lifespan, settings: Settings | None = None) -> Fa
     tests/conftest.py and tests/test_security_composition.py."""
     resolved_settings = settings if settings is not None else get_settings()
 
+    # Constructed once, up front, so BOTH the SecurityHeadersMiddleware wired
+    # near the bottom of this function AND the catch-all Exception handler
+    # (registered next) stamp the IDENTICAL header set on every response,
+    # including the one path (an unhandled 500) that middleware itself never
+    # reaches — see _make_unhandled_exception_handler's docstring.
+    security_headers_policy = SecurityHeadersPolicy(hsts_preload=resolved_settings.security_headers_hsts_preload)
+
     app = FastAPI(
         title=APP_TITLE,
         version=APP_VERSION,
@@ -190,7 +250,7 @@ def create_app(*, lifespan_ctx=lifespan, settings: Settings | None = None) -> Fa
 
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)
     app.add_exception_handler(AppError, _app_error_handler)
-    app.add_exception_handler(Exception, _unhandled_exception_handler)
+    app.add_exception_handler(Exception, _make_unhandled_exception_handler(security_headers_policy))
 
     # --- Security composition (Stage 3 #26, Step 3b) ----------------------
     # See the module docstring's "Security composition" section for the
@@ -219,10 +279,16 @@ def create_app(*, lifespan_ctx=lifespan, settings: Settings | None = None) -> Fa
     # caveat; Stage 11 swaps in a Redis-backed BucketStore for a true shared
     # ceiling). `trusted_hops` defaults to 0 (distrust X-Forwarded-For) —
     # see Settings.rate_limit_trusted_hops's own docstring for the exact,
-    # per-environment opt-in this must never be guessed at.
+    # per-environment opt-in this must never be guessed at. `max_keys=50_000`
+    # is explicit, bounded defense-in-depth on top of the store's own
+    # idle-eviction (`ttl_seconds`, default 900s): even under a sustained
+    # flood of distinct keys (e.g. a high-cardinality spoofed-IP attack)
+    # within one TTL window, the in-memory dict is capped rather than
+    # growing unbounded — see InMemoryBucketStore's own docstring for the
+    # oldest-by-last-seen eviction this triggers once the cap is hit.
     app.add_middleware(
         RateLimitMiddleware,
-        store=InMemoryBucketStore(),
+        store=InMemoryBucketStore(max_keys=50_000),
         capacity=resolved_settings.rate_limit_capacity,
         refill_per_second=resolved_settings.rate_limit_refill_per_second,
         trusted_hops=resolved_settings.rate_limit_trusted_hops,
@@ -238,10 +304,7 @@ def create_app(*, lifespan_ctx=lifespan, settings: Settings | None = None) -> Fa
     # point 1 for why that ordering specifically matters (it must see, and
     # be able to overwrite headers on, every response any lower layer
     # produces, including a 429 or a CORS preflight reply).
-    add_security_headers(
-        app,
-        policy=SecurityHeadersPolicy(hsts_preload=resolved_settings.security_headers_hsts_preload),
-    )
+    add_security_headers(app, policy=security_headers_policy)
     # ------------------------------------------------------------------------
 
     return app
