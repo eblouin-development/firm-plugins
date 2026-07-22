@@ -122,11 +122,16 @@ for path in glob.glob(os.path.join(PLUGIN, "references", "**", "*.md"), recursiv
 
 # 4a. (warning) same freshness/header check for real template blocks, once they
 #     exist. `_`-prefixed files are schema exemplars (e.g. _TEMPLATE-README.md)
-#     and are skipped, matching the references check above. The glob is
-#     empty-dir safe: as of Stage 0 no real block has landed yet, so this is a
-#     no-op until Stage 1+ adds one.
+#     and are skipped, matching the references check above. `docs/fragment.md`
+#     files are also skipped: the canonical fragment format is machine-consumed
+#     (single `<!-- fragment: ... -->` header line, no metadata slot — see
+#     references/authoring/documentation-standard.md); freshness for a block or
+#     component is carried by its README, which does carry `last-verified`.
+#     The glob is empty-dir safe.
 for path in glob.glob(os.path.join(PLUGIN, "templates", "**", "*.md"), recursive=True):
     if os.path.basename(path).startswith("_"):
+        continue
+    if path.endswith(os.path.join("docs", "fragment.md")):
         continue
     head = open(path).read(1000)
     if "last-verified:" not in head:

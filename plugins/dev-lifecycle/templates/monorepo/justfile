@@ -1,0 +1,63 @@
+# Standard task-runner surface for a scaffolded project (composition contract,
+# templates/_TEMPLATE-README.md). Every block wires its runnable behavior
+# into these targets rather than inventing its own. On the empty Stage 1
+# skeleton (no packages under apps/ or packages/ yet), the pnpm-backed
+# targets are clean no-ops thanks to `--if-present`.
+#
+# NOTE on naming: these targets are dash-named (`docs-generate`, not
+# `docs:generate`) because `just` (stable, 1.21.x) does not allow `:` in a
+# recipe or alias name — it's reserved for the dependency separator. This
+# matches the composition contract (templates/_TEMPLATE-README.md) and
+# references/authoring/documentation-standard.md, which name the same
+# dash-form targets. pnpm SCRIPT names (package.json) are a separate
+# namespace and may still use colons where that's the natural convention.
+
+set shell := ["bash", "-uc"]
+
+# List available targets.
+default:
+    @just --list
+
+# Install workspace dependencies.
+install:
+    pnpm install
+
+# Run every package's dev script in parallel (no-op on an empty workspace).
+dev:
+    pnpm -r --if-present --parallel run dev
+
+# Run every package's test script (no-op on an empty workspace).
+test:
+    pnpm -r --if-present run test
+
+# Lint every package (no-op on an empty workspace).
+lint:
+    pnpm -r --if-present run lint
+
+# Typecheck every package (no-op on an empty workspace).
+typecheck:
+    pnpm -r --if-present run typecheck
+
+# Build every package (no-op on an empty workspace).
+build:
+    pnpm -r --if-present run build
+
+# Regenerate the typed api-client from the backend's OpenAPI schema.
+client-generate:
+    pnpm --filter @repo/api-client run generate
+
+# Deploy the project. Unwired until an infra/devops block is scaffolded in
+# (epic #22 Stage 9) — fails loudly rather than silently no-opping, so a
+# real missed deploy can't be mistaken for a no-op success.
+deploy:
+    @echo "deploy is not wired yet — see the infra block (epic #22 Stage 9)." >&2 && exit 1
+
+# Regenerate the root README from every block's co-located doc fragment
+# (docs/fragment.md under apps/*/ and packages/*/ — see
+# references/authoring/documentation-standard.md).
+docs-generate:
+    node scripts/docs-aggregate.mjs
+
+# Check the root README isn't stale relative to the doc fragments.
+docs-check:
+    node scripts/docs-aggregate.mjs --check

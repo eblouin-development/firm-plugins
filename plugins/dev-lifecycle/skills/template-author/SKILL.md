@@ -23,7 +23,7 @@ Pick the layer (`backend`, `frontend`, `mobile`, `infra`, or a new one if the ki
 
 ### 2. Fill the block header and its composition contract
 
-Copy the structure from `${CLAUDE_PLUGIN_ROOT}/templates/_TEMPLATE-README.md` — the block header (`block`, `needs`, `exposes`, `versions-pinned-to`, `last-verified`, `provenance`) plus the `Composition contract (v0)` section — into the block's own `README.md`, and fill it concretely:
+Copy the structure from `${CLAUDE_PLUGIN_ROOT}/templates/_TEMPLATE-README.md` — the block header (`block`, `needs`, `exposes`, `versions-pinned-to`, `last-verified`, `provenance`) plus the `Composition contract` section — into the block's own `README.md`, and fill it concretely:
 
 - **NEEDS** — env vars it reads, backing services, ports, upstream API contract (e.g. the generated `api-client`), shared workspace packages it imports. Don't leave placeholders in a shipped block.
 - **EXPOSES** — routes/OpenAPI it serves, env/config it publishes, workspace packages it publishes, ports it serves on, and its own doc fragment (below).
@@ -41,7 +41,7 @@ A block does not clear authoring until all four are true, each grounded in the k
 
 ### 4. Wire it into the `justfile` targets
 
-If the block has runnable behavior, it wires into the project-root `justfile`'s standard targets (`test`, `lint`, `dev`, `build`, `deploy`, `docs:generate`, `docs:check`) rather than inventing its own task surface.
+If the block has runnable behavior, it wires into the project-root `justfile`'s standard targets (`test`, `lint`, `dev`, `build`, `deploy`, `docs-generate`, `docs-check` — dash-named, since `just` forbids `:` in a recipe name) rather than inventing its own task surface.
 
 ### 5. Verify and hand off
 
