@@ -378,9 +378,15 @@ _KNOWN_DIVERGENCES: dict[tuple[tuple[str, str], str], str] = {
 # view/route at all yet, so it is excluded here the same way `register`/
 # `logout` once were (Stage 5a -> Stage 5b's own comment above), pending
 # that stage landing full parity and removing this entry.
-_PENDING_PARITY_OPS: set[tuple[str, str]] = {
-    ("/admin/ping", "get"),
-}
+# Stage 5d (#46) landed full Django parity for /admin/ping (core/views.py's
+# AdminPingView, core/urls.py's new route, core/security/auth/permissions.py's
+# has_role) with a wire-shape that matches the frozen contract exactly --
+# proven by the strict comparison above, which now includes it. EMPTY, not
+# deleted -- same posture every prior stage's own comment (above) already
+# documents: this constant (and both stale-guards below, which still apply
+# to any FUTURE pending-parity op) stays the documented seam a later stage's
+# own in-flight parity work reuses.
+_PENDING_PARITY_OPS: set[tuple[str, str]] = set()
 
 
 def test_wire_surface_is_identical_to_the_frozen_contract() -> None:

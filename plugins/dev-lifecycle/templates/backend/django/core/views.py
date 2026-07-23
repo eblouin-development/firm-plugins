@@ -49,6 +49,7 @@ from rest_framework.views import APIView
 from core.contract.errors import NotFoundError
 from core.models import Item
 from core.security.auth import AuthService, InvalidToken, resolve_principal
+from core.security.auth.permissions import has_role
 from core.security.auth.stores import (
     AuditAuthEventSink,
     DjangoRefreshTokenStore,
@@ -670,3 +671,54 @@ class MeView(APIView):
             raise InvalidToken("This token no longer maps to an active user.")
         principal = PrincipalOutSerializer({"id": uuid.UUID(user.id), "email": user.email})
         return Response(principal.data)
+
+
+class AdminPingView(APIView):
+    """`GET /admin/ping` (Stage 5d, #46) — the RBAC admin example, the DRF
+    counterpart to `app/api/routers/admin.py`'s `admin_ping`. Demonstrates
+    `has_role` (`core/security/auth/permissions.py`) end to end, with no
+    new auth logic of its own:
+
+    - **200** for an authenticated principal whose `AccessClaims.roles`
+      includes `"admin"`.
+    - **403** `permission_denied` for an authenticated principal WITHOUT
+      the `"admin"` role — `has_role("admin")`'s permission class raises
+      `InsufficientRole` (`core/security/auth/django.py`), mapped by
+      `core/exceptions.py`'s `AuthError` branch via `AUTH_ERROR_HTTP`.
+    - **401** `unauthenticated` for a missing/malformed/expired bearer
+      token — `require_roles`'s own `resolve_principal` call (inside
+      `has_role`'s `has_permission`) raises `_core.InvalidToken` before
+      DRF's dispatch ever reaches this view's `get` body.
+
+    `permission_classes = [has_role("admin")]` does the entire job here —
+    unlike `MeView` above, this view does NOT re-implement auth by hand in
+    its body; `has_role`'s own docstring explains why that's still safe
+    for this block's `ErrorEnvelope` contract (both exceptions it can raise
+    are `AuthError` subclasses the existing handler already maps, so DRF's
+    own un-enveloped `False`-return 403 path is never reached).
+    `authentication_classes = []` mirrors every other view in this
+    module — this block enforces authentication itself via the vendored
+    auth component, never through DRF's separate `authentication_classes`
+    machinery.
+
+    Reuses `HealthStatusSerializer` (`{"status": str}`) as the response
+    shape rather than inventing a near-identical serializer — this
+    endpoint's own success body is exactly `{"status": "ok"}`, matching
+    `app/api/routers/admin.py`'s own identical reuse of `HealthStatus` and
+    this block's frozen-contract target, `packages/api-client/openapi.json`'s
+    `admin_ping` operation, which this view's `operation_id`/`tags`/`auth`/
+    `responses` below are set to match EXACTLY (see `tests/
+    test_schema_conformance.py`, whose `_PENDING_PARITY_OPS` no longer
+    lists `("/admin/ping", "get")` as of this stage)."""
+
+    permission_classes = [has_role("admin")]
+    authentication_classes: list = []
+
+    @extend_schema(
+        operation_id="admin_ping_admin_ping_get",
+        tags=["admin"],
+        auth=[{"HTTPBearer": []}],
+        responses={200: HealthStatusSerializer, 401: ErrorEnvelopeSerializer, 403: ErrorEnvelopeSerializer},
+    )
+    def get(self, request):
+        return Response(HealthStatusSerializer({"status": "ok"}).data)
