@@ -17,6 +17,7 @@ from __future__ import annotations
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import connection
 from django.db.utils import Error as DjangoDBError
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status, viewsets
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -25,14 +26,29 @@ from rest_framework.views import APIView
 from core.contract.errors import NotFoundError
 from core.models import Item
 from core.serializers import (
+    ErrorEnvelopeSerializer,
     HealthStatusSerializer,
     ItemCreateSerializer,
     ItemOutSerializer,
     ItemUpdateSerializer,
     LoginRequestSerializer,
+    PrincipalOutSerializer,
     ReadinessStatusSerializer,
     RefreshRequestSerializer,
+    TokenResponseSerializer,
 )
+
+# Stage 4 Step 4 (#27): every `operation_id`/`tags` value below is set to
+# the EXACT string `packages/api-client/openapi.json` (the frozen FastAPI
+# contract) already uses for the same operation — FastAPI auto-derives its
+# operationIds from `{handler_name}_{path}_{method}` (see that file's own
+# `operationId` values); drf-spectacular has no equivalent auto-derivation
+# from a DRF view/action name that would land on the same string, so this
+# block sets them explicitly rather than accepting spectacular's own
+# default naming. This is what gets this block's exported schema to FULL
+# operationId parity (not just best-effort) with the frozen contract — see
+# README.md, "Conformance", and tests/test_schema_conformance.py for the
+# proof.
 
 # JUDGMENT CALL (mirrors app/api/routers/auth.py's own, identical call):
 # these 501s are a plain `{"detail": ...}` body, deliberately bypassing
@@ -46,6 +62,35 @@ from core.serializers import (
 _STUB_DETAIL = "Not implemented — lands in Stage 5 (#28)."
 
 
+@extend_schema_view(
+    list=extend_schema(
+        operation_id="list_items_items_get",
+        tags=["items"],
+        responses={200: ItemOutSerializer, 422: ErrorEnvelopeSerializer},
+    ),
+    create=extend_schema(
+        operation_id="create_item_items_post",
+        tags=["items"],
+        request=ItemCreateSerializer,
+        responses={201: ItemOutSerializer, 422: ErrorEnvelopeSerializer},
+    ),
+    retrieve=extend_schema(
+        operation_id="get_item_items__item_id__get",
+        tags=["items"],
+        responses={200: ItemOutSerializer, 404: ErrorEnvelopeSerializer, 422: ErrorEnvelopeSerializer},
+    ),
+    partial_update=extend_schema(
+        operation_id="update_item_items__item_id__patch",
+        tags=["items"],
+        request=ItemUpdateSerializer,
+        responses={200: ItemOutSerializer, 404: ErrorEnvelopeSerializer, 422: ErrorEnvelopeSerializer},
+    ),
+    destroy=extend_schema(
+        operation_id="delete_item_items__item_id__delete",
+        tags=["items"],
+        responses={204: None, 404: ErrorEnvelopeSerializer, 422: ErrorEnvelopeSerializer},
+    ),
+)
 class ItemViewSet(viewsets.ModelViewSet):
     """Full CRUD for `Item` — the DRF counterpart to backend/fastapi's
     `app/api/routers/items.py`. Every handler below is thin: validate (via
@@ -163,6 +208,11 @@ class HealthCheckView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
 
+    @extend_schema(
+        operation_id="health_check_health_get",
+        tags=["health"],
+        responses={200: HealthStatusSerializer},
+    )
     def get(self, request):
         return Response(HealthStatusSerializer({"status": "ok"}).data)
 
@@ -187,6 +237,11 @@ class ReadinessCheckView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
 
+    @extend_schema(
+        operation_id="readiness_check_readyz_get",
+        tags=["health"],
+        responses={200: ReadinessStatusSerializer, 503: ReadinessStatusSerializer},
+    )
     def get(self, request):
         try:
             with connection.cursor() as cursor:
@@ -205,11 +260,24 @@ class LoginView(APIView):
     FastAPI validating `LoginRequest` before its own stub handler ever
     runs) then unconditionally returns the plain 501 stub body — see this
     module's `_STUB_DETAIL` docstring for why that bypasses
-    `ErrorEnvelope`."""
+    `ErrorEnvelope`.
+
+    The `@extend_schema` `responses` below document the shape Stage 5
+    (#28) actually returns (`TokenResponseSerializer`, matching
+    `openapi.json`'s documented `200`) — NOT the current 501 stub body —
+    same "document the target contract now, implement the behavior later"
+    posture `TokenResponseSerializer`'s own docstring already establishes
+    (core/serializers.py)."""
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
 
+    @extend_schema(
+        operation_id="login_auth_login_post",
+        tags=["auth"],
+        request=LoginRequestSerializer,
+        responses={200: TokenResponseSerializer, 422: ErrorEnvelopeSerializer},
+    )
     def post(self, request):
         serializer = LoginRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -222,6 +290,12 @@ class RefreshView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
 
+    @extend_schema(
+        operation_id="refresh_auth_refresh_post",
+        tags=["auth"],
+        request=RefreshRequestSerializer,
+        responses={200: TokenResponseSerializer, 422: ErrorEnvelopeSerializer},
+    )
     def post(self, request):
         serializer = RefreshRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -237,17 +311,27 @@ class MeView(APIView):
     dependency's own docstring ("fails closed with a 501, not yet a
     401/403, because the check itself doesn't exist yet").
 
-    The `HTTPBearer` security scheme itself (`openapi.json`'s
-    `securitySchemes.HTTPBearer`) is a later step's concern: no
-    drf-spectacular schema view is wired yet (this block's README,
-    "Conformance" — Step 1 already noted `drf-spectacular` is installed
-    with no `SPECTACULAR_SETTINGS`/schema view). This view's job for Step
-    2 is only the wire behavior (501, no body validation needed — `/me`
-    takes no request body), not registering the scheme in a served
-    schema."""
+    Stage 4 Step 4 (#27): the `HTTPBearer` security scheme is now
+    registered (`config/settings.py`'s `SPECTACULAR_SETTINGS
+    ["APPEND_COMPONENTS"]`) and this view opts into it via
+    `@extend_schema(auth=[{"HTTPBearer": []}])` below (drf-spectacular's
+    `auth` kwarg overrides `AutoSchema.get_auth()`, which is what actually
+    populates the operation's `security` key) — an exact match with
+    `openapi.json`'s own `security: [{"HTTPBearer": []}]` on this
+    operation. Still no real `authentication_classes` entry to
+    auto-derive it from (`permission_classes = [AllowAny]`/
+    `authentication_classes = []` are unchanged from Step 2) — this is a
+    documented, opted-in security requirement on an otherwise-open stub,
+    not a real enforcement gate; Stage 5 (#28) is what wires the latter."""
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
 
+    @extend_schema(
+        operation_id="me_auth_me_get",
+        tags=["auth"],
+        responses={200: PrincipalOutSerializer},
+        auth=[{"HTTPBearer": []}],
+    )
     def get(self, request):
         return Response({"detail": _STUB_DETAIL}, status=status.HTTP_501_NOT_IMPLEMENTED)

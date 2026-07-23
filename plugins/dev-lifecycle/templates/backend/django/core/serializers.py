@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from core.contract.errors import ErrorCode
 from core.models import Item
 
 
@@ -19,7 +20,23 @@ class ItemOutSerializer(serializers.ModelSerializer):
     `deleted_at`, even though the model carries it for soft-delete
     bookkeeping (core/models.py) — every field here is output-only
     (`read_only_fields = fields`); this serializer is never constructed
-    with `data=...`, only `ItemOutSerializer(instance)`."""
+    with `data=...`, only `ItemOutSerializer(instance)`.
+
+    `name`/`description` explicit `max_length` (Stage 4 Step 4, #27,
+    schema-conformance fix round): a PLAIN `ModelSerializer`-derived
+    read-only field carries no `MaxLengthValidator` (DRF doesn't attach
+    validators to fields it will never validate incoming data against),
+    so drf-spectacular's generated schema silently dropped the
+    `maxLength` constraint `openapi.json`'s own `ItemOut` documents on
+    these same two fields (pydantic's `ItemOut` reuses `ItemBase`'s
+    `Field(max_length=...)` regardless of read/write direction) —
+    documentation-only, zero effect on runtime behavior (still never
+    validated, since both fields stay `read_only=True`); this exists
+    purely to close that generated-schema gap,
+    `tests/test_schema_conformance.py`'s wire-surface proof."""
+
+    name = serializers.CharField(max_length=200, min_length=1, read_only=True)
+    description = serializers.CharField(max_length=2000, allow_null=True, read_only=True)
 
     class Meta:
         model = Item
@@ -119,3 +136,53 @@ class PrincipalOutSerializer(serializers.Serializer):
 
     id = serializers.UUIDField()
     email = serializers.CharField()
+
+
+# ---------------------------------------------------------------------------
+# Documentation-only: the ErrorEnvelope shape, for drf-spectacular
+# (Stage 4 Step 4, #27). `core.exceptions.exception_handler` builds every
+# actual error response straight from `core.contract.errors.ErrorEnvelope`
+# (the vendored Pydantic model) — it never constructs or validates against
+# these DRF serializers, which exist ONLY so `core/views.py`'s
+# `@extend_schema(responses={...: ErrorEnvelopeSerializer})` declarations
+# have a DRF serializer to point the schema generator at (drf-spectacular
+# documents DRF serializers, not arbitrary Pydantic models). Field-for-field
+# copies of `core.contract.errors.{ErrorDetail,ErrorBody,ErrorEnvelope}` —
+# kept in sync by hand since there are only three, small, rarely-changing
+# fields; a drift here would only ever affect the DOCUMENTED schema, never
+# the actual wire response (which is exactly what the wire-surface
+# conformance proof, tests/test_schema_conformance.py, is there to catch).
+# Class names deliberately end in `Serializer` so drf-spectacular's default
+# naming (strips that suffix) produces component names `ErrorDetail`/
+# `ErrorBody`/`ErrorEnvelope` — an exact match with `openapi.json`'s own
+# component names, not a coincidence.
+# ---------------------------------------------------------------------------
+
+
+class ErrorDetailSerializer(serializers.Serializer):
+    """Matches `openapi.json`'s `ErrorDetail`: one item in an error's
+    optional `details` list."""
+
+    field = serializers.CharField(required=False, allow_null=True, default=None)
+    message = serializers.CharField()
+
+
+class ErrorBodySerializer(serializers.Serializer):
+    """Matches `openapi.json`'s `ErrorBody`. `code` is a `ChoiceField` over
+    `core.contract.errors.ErrorCode`'s own members — the same closed,
+    versioned set — so the generated schema documents a proper enum, not an
+    unconstrained string, matching `openapi.json`'s own `ErrorCode` enum
+    component."""
+
+    code = serializers.ChoiceField(choices=[member.value for member in ErrorCode])
+    message = serializers.CharField()
+    details = ErrorDetailSerializer(many=True, required=False, allow_null=True, default=None)
+
+
+class ErrorEnvelopeSerializer(serializers.Serializer):
+    """Matches `openapi.json`'s `ErrorEnvelope` — THE error shape every
+    non-2xx response in this block uses except the one documented exception
+    (429 rate-limit denial's plain `{"detail": ...}` — see README.md,
+    "Conformance")."""
+
+    error = ErrorBodySerializer()

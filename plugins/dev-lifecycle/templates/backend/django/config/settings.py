@@ -74,9 +74,9 @@ INSTALLED_APPS = [
     # over DRF) with no server-rendered templates or admin site as of this
     # step — add them back if a materialized project needs the admin site.
     "rest_framework",
-    # drf-spectacular is installed (pyproject.toml, matrix-pinned) for the
-    # OpenAPI 3 schema generation a later step wires; no DEFAULT_SCHEMA_CLASS
-    # is set yet — see the REST_FRAMEWORK TODO below.
+    # drf-spectacular (pyproject.toml, matrix-pinned) — the OpenAPI 3 schema
+    # generator, wired via REST_FRAMEWORK["DEFAULT_SCHEMA_CLASS"] and
+    # SPECTACULAR_SETTINGS below (Stage 4 Step 4, #27).
     "drf_spectacular",
     # cors-lockdown's REQUIRED_INSTALLED_APP (core/security/cors_lockdown/
     # django.py) — django-cors-headers' own app, needed for its CorsMiddleware
@@ -389,6 +389,52 @@ REST_FRAMEWORK = {
     # see core/pagination.py.
     "DEFAULT_PAGINATION_CLASS": "core.pagination.ContractPageNumberPagination",
     "PAGE_SIZE": 20,
+    # Stage 4 Step 4 (#27): drf-spectacular's AutoSchema, replacing DRF's
+    # own (undocumented-by-default) schema generation — see
+    # SPECTACULAR_SETTINGS below and README.md's "Conformance" for the
+    # wire-surface conformance proof this makes possible.
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+
+# ---------------------------------------------------------------------------
+# drf-spectacular — Stage 4 Step 4 (#27). Generates this app's OpenAPI 3
+# schema from the DRF views/serializers actually wired above (`core/urls.py`,
+# `core/views.py`, `core/serializers.py`), each decorated with `@extend_schema`
+# to reach BEST-EFFORT parity — operationIds, tags, and component names —
+# with the frozen `packages/api-client/openapi.json` FastAPI exported
+# (see README.md, "Conformance" — Step 4, for the full wire-surface
+# conformance proof and the documented operationId/component-name deltas).
+# `SERVE_INCLUDE_SCHEMA=False`: the schema view itself
+# (`config/urls.py`'s `/api/schema`) does not recursively document itself.
+# `APPEND_COMPONENTS` hand-declares the `HTTPBearer` security scheme
+# (`securitySchemes.HTTPBearer` in the frozen contract) — there is no real
+# DRF `authentication_classes` entry yet to auto-derive it from (every view
+# is `authentication_classes = []` until Stage 5, #28), so `core/views.py`'s
+# `MeView` opts into it explicitly via `@extend_schema(security=...)`
+# instead.
+# ---------------------------------------------------------------------------
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Django block",
+    "DESCRIPTION": (
+        "Stage 4 (#27) Django + DRF backend block — best-effort OpenAPI "
+        "schema parity with packages/api-client/openapi.json (the frozen "
+        "FastAPI contract); see this block's README.md, 'Conformance'."
+    ),
+    "VERSION": "0.1.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    # This app's own DRF serializers already carry no `Serializer` in their
+    # documented shape's intent (`ItemOutSerializer` -> component `ItemOut`,
+    # matching `openapi.json`'s `ItemOut` exactly) — spectacular's own
+    # default `POSTPROCESSING_HOOKS`/naming already strips the `Serializer`
+    # suffix, so no `COMPONENT_SPLIT_REQUEST`/custom naming hook is needed
+    # for that half of the parity target.
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "HTTPBearer": {"type": "http", "scheme": "bearer"},
+        },
+    },
 }
 
 

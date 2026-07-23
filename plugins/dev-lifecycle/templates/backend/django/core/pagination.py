@@ -104,3 +104,40 @@ class ContractPageNumberPagination(PageNumberPagination):
         params = PageParams(page=self.page.number, size=self.page.paginator.per_page)
         page = Page.create(list(data), total=self.page.paginator.count, params=params)
         return Response(page.model_dump(mode="json"))
+
+    def get_paginated_response_schema(self, schema):
+        """drf-spectacular's own documented hook (same name/contract as DRF
+        base `PageNumberPagination`'s own schema method it overrides) —
+        called with the ALREADY-RESOLVED per-item schema (`ItemOut` for
+        `GET /items`) to build the schema for the paginated ENVELOPE this
+        class's `get_paginated_response` above actually returns. Mirrors
+        `openapi.json`'s `Page_ItemOut_` component's `{items, total, page,
+        size, pages}` shape field-for-field (Stage 4 Step 4, #27) — see
+        `core/contract/pagination.py`'s vendored `Page` model, the same
+        contract this emits over HTTP. Returned inline (no named component)
+        rather than as a registered `$ref` -- drf-spectacular's own
+        pagination-schema seam doesn't offer a component-naming hook the
+        way a `@extend_schema(responses=...)` serializer reference does;
+        `tests/test_schema_conformance.py`'s wire-surface normalizer
+        resolves `openapi.json`'s named `Page[ItemOut]` $ref down to this
+        same structural shape before comparing, so the two are proven
+        wire-EQUAL despite this one being inline and that one being a named
+        component -- the documented component-NAME divergence this
+        introduces is reported, not hidden, by that same test."""
+        return {
+            "type": "object",
+            "properties": {
+                # `schema` arrives ALREADY array-wrapped (DRF's own
+                # `PageNumberPagination.get_paginated_response_schema`,
+                # `results: schema`, is the reference implementation this
+                # mirrors) -- wrapping it in a SECOND `{"type": "array",
+                # "items": schema}` here would double-nest it into an
+                # array-of-arrays, which is wrong. Use it directly.
+                "items": schema,
+                "total": {"type": "integer", "minimum": 0},
+                "page": {"type": "integer", "minimum": 1},
+                "size": {"type": "integer", "minimum": 1},
+                "pages": {"type": "integer", "minimum": 0},
+            },
+            "required": ["items", "total", "page", "size", "pages"],
+        }

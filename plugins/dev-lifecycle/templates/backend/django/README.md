@@ -8,6 +8,7 @@ needs:
 exposes:
   - the Item model + the DRF contract-emission layer (routes, serializers, ErrorEnvelope exception handler, Page paginator) — see "Conformance"
   - core/security/ — the vendored security-composition MIDDLEWARE stack — see "Security composition"
+  - /api/schema — drf-spectacular's OpenAPI schema, wire-surface-proven vs. packages/api-client/openapi.json — see "Step 4" below
   - its co-located doc fragment: docs/fragment.md
 versions-pinned-to: references/compatibility-matrix.md
 last-verified: 2026-07-23
@@ -21,17 +22,21 @@ Postgres via psycopg, built as an **ALTERNATIVE** to `backend/fastapi` in the
 same `apps/api/` materialization slot (a project picks one backend track,
 not both). Lives at `templates/backend/django/` in this repo; scaffolding
 materializes it into a project's `apps/api/`, exactly like the FastAPI block
-does. Stage 4 (#27, epic #22) in three steps: Step 1 shipped the project
+does. Stage 4 (#27, epic #22) in four steps: Step 1 shipped the project
 skeleton, env-driven settings, the `Item` contract-exemplar model + initial
 migration, and the two vendored contract sources (`error-envelope`,
 `pagination`); Step 2 was DRF contract-EMISSION — the routes/serializers,
 the custom `EXCEPTION_HANDLER`, and the pagination class that actually
 render those vendored contracts over HTTP, reproducing `backend/fastapi`'s
-wire shape (see "Conformance" below); **Step 3 (this state) is security
-composition** — vendoring and wiring the six baseline
-`templates/components/security/` catalog components into this track's
-MIDDLEWARE stack, fulfilling the Step 1/2 transport-security-headers
-deferral — see "Security composition" below.
+wire shape (see "Conformance" below); Step 3 was security composition —
+vendoring and wiring the six baseline `templates/components/security/`
+catalog components into this track's MIDDLEWARE stack, fulfilling the
+Step 1/2 transport-security-headers deferral (see "Security composition"
+below); **Step 4 (this state) is the OpenAPI schema + the wire-surface
+CONFORMANCE PROOF** — drf-spectacular wired with best-effort
+operationId/component-name parity, PLUS the dev Dockerfile/compose and a
+real-PostgreSQL-16 verification pass — see "Step 4: OpenAPI schema +
+wire-surface conformance proof" below.
 
 ## Contents
 - Composition contract
@@ -39,6 +44,7 @@ deferral — see "Security composition" below.
 - App layout
 - The Item model
 - Conformance (Step 1 vs. Step 2)
+  - Step 4: OpenAPI schema + wire-surface conformance proof (#27)
 - Security
   - Security composition (Stage 4 Step 3, #27)
 - Database & migrations
@@ -337,6 +343,142 @@ client never triggers):
   cross-backend list-order parity — tracked as a follow-up for Step 4 /
   the whole-PR review, not addressed in this commit.
 
+### Step 4: OpenAPI schema + wire-surface conformance proof (#27)
+
+**GATE-1, restated precisely** (this is what Step 4 exists to PROVE, not
+just assert): WIRE-CONTRACT IDENTITY — byte-identical paths, methods,
+response statuses, and request/response JSON shapes — between this Django
+block and the frozen `packages/api-client/openapi.json` contract, ON THE
+DOCUMENTED OPERATIONS (the ones above's "Accepted, documented
+per-framework divergences" already carves out real, narrow exceptions to).
+Best-effort (not guaranteed) parity on OpenAPI operationIds and
+component names. Documented, not automated: how a Django-only project
+regenerates ITS OWN client from THIS block's schema, not a promise that
+`packages/api-client`'s already-committed, FastAPI-generated client is a
+drop-in for a Django-backed project.
+
+**drf-spectacular is wired**: `REST_FRAMEWORK["DEFAULT_SCHEMA_CLASS"]` +
+`SPECTACULAR_SETTINGS` (`config/settings.py`), `/api/schema`
+(`config/urls.py`'s `SpectacularAPIView` — additive, not part of the
+frozen route set itself), and every view in `core/views.py` carries an
+explicit `@extend_schema`/`@extend_schema_view` declaration. Every
+`operation_id` is set to the EXACT string `openapi.json` already uses for
+that operation (FastAPI auto-derives operationIds from
+`{handler}_{path}_{method}`; drf-spectacular has no equivalent
+auto-derivation that lands on the same string, so this block sets them by
+hand) — this is FULL, not best-effort, operationId parity, verified by
+`tests/test_schema_conformance.py::test_operation_id_and_component_name_parity_report`
+(fails if any operationId ever regresses). Component-NAME parity is
+best-effort and only partial — see the table below.
+
+**`core/pagination.py`'s `ContractPageNumberPagination.get_paginated_response_schema`**
+(drf-spectacular's own documented override point, the same one DRF's base
+`PageNumberPagination` uses) renders the `{items, total, page, size,
+pages}` envelope inline rather than as a named component — a real,
+reported component-naming divergence from `openapi.json`'s named
+`Page[ItemOut]`, but structurally identical once dereferenced (see the
+conformance proof below).
+
+**`core/serializers.py`'s `ErrorDetailSerializer`/`ErrorBodySerializer`/
+`ErrorEnvelopeSerializer`** are DOCUMENTATION-ONLY — `core/exceptions.py`
+still builds every actual error response straight from the vendored
+Pydantic `core.contract.errors.ErrorEnvelope`, never these DRF
+serializers. They exist purely so `@extend_schema(responses={...:
+ErrorEnvelopeSerializer})` has a DRF serializer to point drf-spectacular
+at (it documents DRF serializers, not arbitrary Pydantic models) —
+field-for-field hand-kept copies of the vendored contract; a drift here
+only ever affects the DOCUMENTED schema, never the actual wire response,
+which is exactly what the conformance proof below is there to catch.
+
+**THE conformance proof: `tests/test_schema_conformance.py`.** Loads BOTH
+schemas — this block's own (generated in-process by drf-spectacular's
+`SchemaGenerator`, the same code path `manage.py spectacular
+--format openapi-json --file <path>` runs; verified separately by hand,
+0 warnings, no live database touched either way — schema generation only
+introspects views/serializers, never queries) and the committed frozen
+`openapi.json` — normalizes each operation's request/response JSON Schema
+(fully dereferenced, with a narrow, individually-justified set of
+normalizations: OpenAPI 3.0-vs-3.1 nullable representation collapsed to
+one form; cosmetic keys — `title`/`description`/`example`/`default` —
+stripped; `additionalProperties`/`readOnly`/`writeOnly` stripped as
+validation-strictness annotations, not shape facts; a response body's
+`required` array stripped, since pydantic ties it to constructor-default
+presence — a REQUEST concept — while both backends' actual HTTP responses
+always include every documented key regardless, verified directly by
+`test_conformance_errors.py`/`test_items.py`; see the test module's own
+docstrings for the full reasoning on each), then asserts the two wire
+surfaces — the set of `(path, method, response-status, request-body-shape,
+response-body-shape)` — are EQUAL.
+
+**RESULT: wire surfaces are EQUAL** on every one of the 7 documented
+routes (14 operations), with exactly ONE further, individually-documented
+exception (`_KNOWN_DIVERGENCES` in that test file, not a blanket
+normalization): `PATCH /items/{item_id}`'s request body. The frozen
+contract's `ItemUpdate.name` (`backend/fastapi/app/schemas/item.py`) is
+declared schema-NULLABLE (`str | None = Field(default=None, ...)`) with NO
+guard in `update_item` (`backend/fastapi/app/api/routers/items.py`)
+against an explicitly-null value before `repo.update(obj, name=None)` —
+since `Item.name` is a NOT-NULL column on BOTH tracks, that request would
+reach the database and raise an unhandled 500 on the FastAPI side too.
+**This is a discovered gap in the frozen contract's own reference
+implementation, not a Django-side shortfall** — mirroring the nullable
+declaration into `core/serializers.py`'s `ItemUpdateSerializer.name`
+would import the identical crash risk into this block for the sake of a
+closer schema match. Django's actual behavior (explicit `null` is REJECTED
+with a clean 422 `validation_failed`, never reaches the DB) is the safer
+posture and is kept as-is. **Flagged as a FastAPI-side follow-up in this
+PR's decision log** (Stage 12/hardening candidate, out of this
+Django-only step's scope): either make `ItemUpdate.name` genuinely
+non-nullable, or guard against an explicit null before the repository
+call.
+
+**Best-effort component-name parity — what matched vs. differs:**
+
+| Match? | Django component | Frozen contract component | Note |
+|---|---|---|---|
+| ✅ | `ErrorBody` | `ErrorBody` | exact |
+| ✅ | `ErrorDetail` | `ErrorDetail` | exact |
+| ✅ | `ErrorEnvelope` | `ErrorEnvelope` | exact |
+| ✅ | `HealthStatus` | `HealthStatus` | exact |
+| ✅ | `ItemCreate` | `ItemCreate` | exact |
+| ✅ | `ItemOut` | `ItemOut` | exact |
+| ✅ | `LoginRequest` | `LoginRequest` | exact |
+| ✅ | `PrincipalOut` | `PrincipalOut` | exact |
+| ✅ | `ReadinessStatus` | `ReadinessStatus` | exact |
+| ✅ | `RefreshRequest` | `RefreshRequest` | exact |
+| ✅ | `TokenResponse` | `TokenResponse` | exact |
+| ❌ | `CodeEnum` | `ErrorCode` | drf-spectacular auto-names extracted enums from a hash of their choices, not the Python `StrEnum` class name; structurally identical (same 7 members) |
+| ❌ | `PaginatedItemOutList` | `Page_ItemOut_` | drf-spectacular's own pagination-schema naming convention vs. FastAPI's `Page[ItemOut]`-derived name; structurally identical once dereferenced (see the proof above) |
+| ❌ | `PatchedItemUpdate` | `ItemUpdate` | drf-spectacular auto-generates a separate `Patched<X>` variant for PATCH (DRF's `partial=True` convention has no FastAPI-side equivalent — `ItemUpdate` is already all-optional, so FastAPI reuses it directly for PATCH); structurally identical except the ONE documented `name`-nullability divergence above |
+
+11 of 14 components match exactly; the 3 that don't are drf-spectacular's
+own naming conventions (enum-hash naming, pagination-envelope naming,
+partial-update variant naming) with no `ENUM_NAME_OVERRIDES`/custom
+naming hook applied to force them — a real gap a future step could close,
+left as best-effort per this step's own instructions rather than fought
+to zero.
+
+**Regenerating a Django-only project's own client** (this block's schema,
+not the frozen FastAPI one committed at `packages/api-client/
+openapi.json` — that file is FastAPI's export and is NOT overwritten by
+this step):
+
+```sh
+manage.py spectacular --format openapi-json --file packages/api-client/openapi.json
+just client-generate
+```
+
+**`just client-generate`'s re-export step currently targets the FastAPI
+app specifically** (the monorepo justfile's recipe re-runs FastAPI's own
+`app/main.py`-based export before calling `orval`) — a Django-only project
+(no `apps/api` FastAPI process to import) swaps that one command for the
+`manage.py spectacular` line above; the rest of the pipeline (`orval`
+generating the TypeScript client from whichever `openapi.json` is on
+disk) is backend-agnostic already. Making that swap automatic — detecting
+which backend track a materialized project actually has and calling the
+right export command — is flagged as a Stage 12 item (backend-agnostic
+client regeneration), not built here.
+
 ## Security
 
 ### Security composition (Stage 4 Step 3, #27)
@@ -552,7 +694,7 @@ unchanged and not repeated here.
 Verification for this step: `manage.py check` (hermetic-sqlite), `manage.py
 migrate` clean, the full pytest suite green (39 tests — the 26 above plus 13
 new in `test_security_composition.py`), and `scripts/validate_plugin.py` 0
-warnings. **Review fix round (this state, #27):** one new test
+warnings. **Review fix round (#27):** one new test
 (`test_health_and_readyz_are_never_rate_limited_even_under_burst`) brings
 the suite to 40, still green; order-independence verified directly by
 running the full test-module list both forwards and reversed (e.g.
@@ -561,6 +703,22 @@ running the full test-module list both forwards and reversed (e.g.
 order) — both orderings pass, confirming the autouse
 `_reset_rate_limit_store` fixture (`tests/conftest.py`) actually decouples
 the rate-limiting tests' outcome from whatever ran before them.
+
+- `test_schema_conformance.py` (Stage 4 Step 4, #27) — THE wire-surface
+  conformance proof; see "Step 4: OpenAPI schema + wire-surface conformance
+  proof" above for the full result. Two tests:
+  `test_wire_surface_is_identical_to_the_frozen_contract` (the hard gate —
+  fails loudly on any undocumented divergence) and
+  `test_operation_id_and_component_name_parity_report` (prints the
+  best-effort operationId/component-name delta report and fails only if an
+  operationId — which this block controls exactly — ever regresses).
+
+Verification for this step (this state, #27): `manage.py check`
+(hermetic-sqlite), the full pytest suite green (42 tests — the 40 above
+plus 2 in `test_schema_conformance.py`), `manage.py spectacular
+--format openapi-json --file <path>` exports clean with 0 warnings (run by
+hand, not part of the hermetic suite itself — see that section above), and
+`scripts/validate_plugin.py` 0 warnings.
 
 ## Judgment calls
 
