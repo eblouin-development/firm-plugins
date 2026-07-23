@@ -413,7 +413,23 @@ _KNOWN_DIVERGENCES: dict[tuple[tuple[str, str], str], str] = {
 # strict comparison above, which now includes every one of them. EMPTY, not
 # deleted -- same posture every prior stage's own comment (above) already
 # documents.
-_PENDING_PARITY_OPS: set[tuple[str, str]] = set()
+#
+# Stage 13d -> Stage 13c: backend/fastapi's Stage 13c implemented the
+# moderation admin surface -- `GET /admin/flags`, `GET /admin/flags/
+# {flag_id}`, `POST /admin/flags/{flag_id}/{resolve,dismiss}`
+# (`app/api/routers/moderation.py`) -- and extended the frozen contract
+# with all four new operations. Django parity (`core/models.py`'s new
+# `Flag`, `core/serializers.py`'s new serializers, `core/views.py`'s new
+# moderation admin views, `core/urls.py`'s new routes) is this same
+# stage's job, landed in a follow-up commit -- these four entries are
+# removed (this set goes back to empty) once that lands with a wire-shape
+# that matches the frozen contract exactly.
+_PENDING_PARITY_OPS: set[tuple[str, str]] = {
+    ("/admin/flags", "get"),
+    ("/admin/flags/{param}", "get"),
+    ("/admin/flags/{param}/resolve", "post"),
+    ("/admin/flags/{param}/dismiss", "post"),
+}
 
 
 def test_wire_surface_is_identical_to_the_frozen_contract() -> None:
