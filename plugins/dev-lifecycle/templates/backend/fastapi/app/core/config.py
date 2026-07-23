@@ -136,6 +136,116 @@ class Settings(AppSettings):
         "of that, not the only defense.",
     )
 
+    # --- Account lifecycle (Stage 5c, #45): AccountService/build_account_
+    # service() in app/core/security/auth/stores.py wires against these.
+    # NOT yet wired into get_auth_service()/login itself -- that's the next
+    # stage's endpoint work; these fields exist so this stage's service/
+    # factory layer has real config to build against. ------------------
+    auth_require_email_verification: bool = Field(
+        default=True,
+        description="SECURE DEFAULT: True -- once an endpoint stage wires "
+        "this into AuthService(require_verification=...), an unverified "
+        "account cannot log in. This field is inert on its own until that "
+        "wiring lands (Stage 5c does not touch login behavior).",
+    )
+    auth_lockout_enabled: bool = Field(
+        default=True,
+        description="SECURE DEFAULT: True -- build_lockout_policy() returns "
+        "a real LockoutPolicy (backed by SqlAlchemyLockoutStore) when this "
+        "is set, None when it isn't. See build_lockout_policy()'s own "
+        "docstring.",
+    )
+    auth_lockout_max_failures: int = Field(
+        default=5,
+        description="_core.LockoutPolicy's max_failures -- consecutive "
+        "failed logins for one account, within auth_lockout_window_seconds, "
+        "before the account locks.",
+    )
+    auth_lockout_duration_seconds: int = Field(
+        default=900,
+        description="_core.LockoutPolicy's lockout_duration, 15 minutes -- "
+        "how long an account stays locked once max_failures is crossed "
+        "(re-armed on every subsequent failure while still locked -- see "
+        "LockoutPolicy.record_failure's own docstring).",
+    )
+    auth_lockout_window_seconds: int = Field(
+        default=900,
+        description="_core.LockoutPolicy's rolling window, 15 minutes -- a "
+        "failure older than this resets the streak rather than "
+        "accumulating onto it (see LockoutPolicy.record_failure's own "
+        "'Rolling window' section).",
+    )
+
+    # --- Email (Stage 5c, #45): get_email_sender() below resolves a
+    # ConsoleEmailSender (dev/test) when smtp_host is unset, else a real
+    # SmtpEmailSender built from these -- same "don't invent a secret"
+    # posture as jwt_signing_key above (smtp_* resolve via secret_store's
+    # layered env-then-AWS-Secrets-Manager lookup, never a hardcoded
+    # fallback). --------------------------------------------------------
+    smtp_host: str | None = Field(
+        default_factory=lambda: get_secret("SMTP_HOST", required=False),
+        repr=False,
+        exclude=True,
+        description="SMTP relay hostname. Unset (None) in dev/test -- "
+        "get_email_sender() falls back to ConsoleEmailSender when this is "
+        "unset, exactly the 'don't invent a secret, fail closed at the "
+        "point of use, not at Settings() construction' posture "
+        "jwt_signing_key's own docstring documents.",
+    )
+    smtp_port: int = Field(
+        default_factory=lambda: int(get_secret("SMTP_PORT", required=False, default="587")),
+        description="SMTP relay port. 587 (STARTTLS submission) is the "
+        "default if SMTP_PORT is unset -- only consulted once smtp_host is "
+        "actually set.",
+    )
+    smtp_username: str | None = Field(
+        default_factory=lambda: get_secret("SMTP_USERNAME", required=False),
+        repr=False,
+        exclude=True,
+        description="SMTP auth username. None skips SMTP AUTH entirely "
+        "(some relays, e.g. an internal MTA, don't require it).",
+    )
+    smtp_password: str | None = Field(
+        default_factory=lambda: get_secret("SMTP_PASSWORD", required=False),
+        repr=False,
+        exclude=True,
+        description="SMTP auth password -- never logged, never included in "
+        "a Settings repr/model_dump (repr=False, exclude=True), matching "
+        "every other secret field in this class.",
+    )
+    email_from: str = Field(
+        default="no-reply@example.com",
+        description="The 'From' address AccountService's verify/reset "
+        "emails (and any future transactional email) are sent as. Not a "
+        "secret -- a plain per-environment config value, overridden per "
+        "deployment, never left at this placeholder in production.",
+    )
+
+    # --- Frontend link target (Stage 5c, #45): AccountService builds
+    # verify-email/reset-password links against this origin -- see
+    # _core.AccountService's own docstring on the '#token=' fragment
+    # placement. ----------------------------------------------------------
+    frontend_base_url: str = Field(
+        default="http://localhost:5173",
+        description="The SPA/site origin AccountService.request_email_"
+        "verification/request_password_reset build links against "
+        "('{frontend_base_url}/verify-email#token=...'). Default is a "
+        "typical local Vite dev server -- override per environment.",
+    )
+    auth_verify_ttl_seconds: int = Field(
+        default=86_400,
+        description="AccountService's verify_ttl, 24 hours -- how long an "
+        "email-verification link stays valid before SingleUseTokenService."
+        "consume rejects it as expired.",
+    )
+    auth_reset_ttl_seconds: int = Field(
+        default=3_600,
+        description="AccountService's reset_ttl, 1 hour -- shorter than "
+        "verify_ttl on purpose, see AccountService's own docstring: an "
+        "unconsumed password-reset link is a more immediately sensitive "
+        "thing to have floating around than an unconsumed verify link.",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

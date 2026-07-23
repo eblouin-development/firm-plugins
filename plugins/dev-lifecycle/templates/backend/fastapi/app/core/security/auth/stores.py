@@ -1,7 +1,19 @@
 """App-specific SQLAlchemy-backed implementations of the vendored auth
-component's `UserStore`/`RefreshTokenStore` protocols (`_core.py`), plus
-the app-level `PasswordService`/`TokenService` construction this block's
+component's `UserStore`/`RefreshTokenStore`/`SingleUseTokenStore`/
+`LockoutStore` protocols (`_core.py`), plus the app-level
+`PasswordService`/`TokenService` construction this block's
 `app/api/deps.py:get_auth_service` binds into a per-request `AuthService`.
+
+Stage 5c (#45) additionally adds this app's `EmailSender` (`get_email_sender`
+-- `ConsoleEmailSender` in dev/test, a hand-rolled `SmtpEmailSender` once
+SMTP is configured) and `AuthEventSink` (`AuditAuthEventSink`, forwarding to
+the vendored audit-logging component) implementations, plus
+`build_lockout_policy`/`build_account_service` factories for the new
+`AccountService` (email verification + password reset). These are NEW
+factories alongside the existing `get_auth_service` (in `app/api/deps.py`)
+-- this stage does not modify that function or wire `AccountService`/
+lockout/verification into login itself; that is the next stage's endpoint
+work.
 
 **NOT a vendored file** — it lives alongside `_core.py`/`fastapi.py`/
 `__init__.py` in this directory because that is where this app's auth
@@ -14,22 +26,31 @@ weekly freshness audit does not touch this file.
 
 from __future__ import annotations
 
+import smtplib
 import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage as MimeEmailMessage
 from functools import lru_cache
 
+import anyio.to_thread
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.security.audit_logging.audit import audit_event
 from app.core.security.auth import (
+    AccountService,
     AttemptRecord,
+    ConsoleEmailSender,
+    EmailMessage,
+    EmailSender,
     LockoutPolicy,
     PasswordService,
     RefreshRecord,
     SingleUseTokenRecord,
+    SingleUseTokenService,
     TokenService,
     UserRecord,
 )
@@ -520,4 +541,189 @@ def get_token_service(settings: Settings) -> TokenService:
         access_ttl=timedelta(seconds=settings.jwt_access_ttl_seconds),
         refresh_ttl=timedelta(seconds=settings.jwt_refresh_ttl_seconds),
         now=utc_now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Email seam: ConsoleEmailSender (dev/test, vendored) vs. a real SmtpEmailSender
+# ---------------------------------------------------------------------------
+
+
+class SmtpEmailSender:
+    """Production `_core.EmailSender` implementation — hand-rolled, stdlib
+    `smtplib` + `email.message.EmailMessage` only (no third-party email
+    library/pin), matching this app's "don't add a dependency for what the
+    standard library already does" posture elsewhere in this catalog.
+
+    `smtplib.SMTP` is a BLOCKING, synchronous socket API — calling it
+    directly from an `async def send()` would block the whole event loop
+    (every other in-flight request) for as long as the SMTP handshake/send
+    takes. `send()` instead bridges the blocking call onto a worker thread
+    via `anyio.to_thread.run_sync` — `anyio` is already a transitive
+    dependency of FastAPI/Starlette (no new pin in `pyproject.toml` is
+    needed), and is the framework-agnostic thread-offload primitive
+    Starlette itself uses internally, so reaching for it here matches how
+    this app's own ASGI stack already handles blocking work.
+
+    Always issues `STARTTLS` before authenticating — this app never sends
+    a plaintext SMTP AUTH exchange (which would leak `smtp_username`/
+    `smtp_password` to a network observer) over an unencrypted connection.
+    `username`/`password` are optional (`None`/`None` skips the `AUTH`
+    step entirely) for a relay that doesn't require authentication (e.g. an
+    internal MTA on a trusted network)."""
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        username: str | None,
+        password: str | None,
+        from_addr: str,
+    ) -> None:
+        self._host = host
+        self._port = port
+        self._username = username
+        self._password = password
+        self._from_addr = from_addr
+
+    async def send(self, message: EmailMessage) -> None:
+        await anyio.to_thread.run_sync(self._send_sync, message)
+
+    def _send_sync(self, message: EmailMessage) -> None:
+        """Runs on a worker thread (via `anyio.to_thread.run_sync` above) —
+        every call here is BLOCKING stdlib I/O, never `await`ed directly."""
+        mime = MimeEmailMessage()
+        mime["From"] = self._from_addr
+        mime["To"] = message.to
+        mime["Subject"] = message.subject
+        mime.set_content(message.body)
+        with smtplib.SMTP(self._host, self._port, timeout=10) as client:
+            client.starttls()
+            if self._username and self._password:
+                client.login(self._username, self._password)
+            client.send_message(mime)
+
+
+def get_email_sender(settings: Settings) -> EmailSender:
+    """Returns a `ConsoleEmailSender` (vendored, dev/test-only — logs the
+    message, including the raw single-use token, instead of delivering it —
+    see that class's own docstring) when `settings.smtp_host` is unset,
+    else a real `SmtpEmailSender` built from `settings.smtp_*`/`email_from`.
+    Same "don't invent a secret, fail closed to the SAFE dev-only fallback
+    rather than a fake/broken production path" posture as
+    `get_token_service`'s `AuthNotConfiguredError` guard above, applied to
+    email instead of JWT signing: an unset `SMTP_HOST` never raises here —
+    it just means this process never intended to send real email (matching
+    most of this app's tests/local dev), so `ConsoleEmailSender` is the
+    correct, safe default rather than a hard failure."""
+    if not settings.smtp_host:
+        return ConsoleEmailSender()
+    return SmtpEmailSender(
+        host=settings.smtp_host,
+        port=settings.smtp_port,
+        username=settings.smtp_username,
+        password=settings.smtp_password,
+        from_addr=settings.email_from,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit seam: AuditAuthEventSink forwards to the vendored audit-logging
+# component's audit_event()
+# ---------------------------------------------------------------------------
+
+
+class AuditAuthEventSink:
+    """Implements `_core.AuthEventSink` by forwarding every call to the
+    vendored audit-logging component's `audit_event(...)`
+    (`app/core/security/audit_logging/audit.py`) — this is the "thin
+    adapter" `_core.AuthEventSink`'s own docstring describes a project
+    wiring, kept as app code (not part of `_core.py`) so that module stays
+    at "stdlib + PyJWT + argon2-cffi only, zero framework/app import".
+
+    `action`/`actor`/`outcome` pass straight through — `_core.py` already
+    constructs `actor` as a bare opaque id string (a user id, `"anonymous"`,
+    or `"unknown"`/`"user:unknown"` for a path with no trustworthy
+    principal — see e.g. `AccountService.request_password_reset`'s own
+    docstring on why THAT method never uses the submitted email as the
+    actor) — this sink never receives, and therefore can never leak, a raw
+    token, password, or email address as a field: every `**extra` this
+    module's callers pass is limited to what `_core.py`'s own docstrings
+    document (which is nothing beyond `action`/`actor`/`outcome` today).
+    `audit_event`'s own `redact()` step is a second, independent line of
+    defense on top of that — see its own docstring — not the only one.
+
+    `resource` is a fixed `"auth"` string, not per-event — every event this
+    sink ever receives IS an auth-subsystem event acting on the actor's own
+    account; there is no separate, more specific resource identifier to
+    name here that wouldn't just duplicate `actor`."""
+
+    async def emit(self, action: str, *, actor: str, outcome: str, **extra: object) -> None:
+        audit_event(action, actor=actor, resource="auth", outcome=outcome, **extra)
+
+
+# ---------------------------------------------------------------------------
+# AccountService factories (Stage 5c, #45) — NEW, alongside app/api/deps.py's
+# existing get_auth_service. Not yet called from anywhere in this stage.
+# ---------------------------------------------------------------------------
+
+
+def build_lockout_policy(settings: Settings, session: AsyncSession) -> LockoutPolicy | None:
+    """Returns a `LockoutPolicy` backed by `SqlAlchemyLockoutStore(session)`
+    when `settings.auth_lockout_enabled` is `True`, `None` when it isn't —
+    both `AuthService` and `AccountService` treat a `None` lockout as "not
+    wired, skip lockout entirely" (see each class's own `lockout` parameter
+    docstring), so this single function is the one place that decision is
+    made, callable identically for either service's wiring.
+
+    A project wiring `AuthService.login`'s own `lockout=` parameter (the
+    next stage's endpoint work) should call this SAME function, passing the
+    SAME `session`, as `AccountService`'s wiring below does — sharing one
+    `LockoutPolicy` instance (or at least one built against the same
+    underlying `SqlAlchemyLockoutStore`/session/settings) is what lets a
+    successful `AccountService.reset_password` lift a lockout `AuthService.
+    login` had recorded against the same account (see `_core.
+    AccountService.__init__`'s own docstring on its `lockout` parameter)."""
+    if not settings.auth_lockout_enabled:
+        return None
+    return LockoutPolicy(
+        SqlAlchemyLockoutStore(session),
+        max_failures=settings.auth_lockout_max_failures,
+        lockout_duration=timedelta(seconds=settings.auth_lockout_duration_seconds),
+        window=timedelta(seconds=settings.auth_lockout_window_seconds),
+        now=utc_now,
+    )
+
+
+def build_account_service(settings: Settings, session: AsyncSession) -> AccountService:
+    """Builds a per-request `AccountService`, the SAME composition shape
+    `app/api/deps.py:get_auth_service` uses for `AuthService` — a fresh
+    `SqlAlchemyUserStore`/`SqlAlchemyRefreshTokenStore`/
+    `SqlAlchemySingleUseTokenStore` bound to THIS request's `session`, the
+    process-wide `PasswordService` singleton, `utc_now` as the single
+    shared clock, `AuditAuthEventSink()` for `events`, `build_lockout_
+    policy(settings, session)` for `lockout` (shared-session, so a
+    completed reset can lift a lockout `AuthService.login` recorded — see
+    that function's own docstring), and `settings.frontend_base_url`/
+    `auth_verify_ttl_seconds`/`auth_reset_ttl_seconds` for the link-building
+    and TTL configuration.
+
+    Intentionally analogous to (but NOT calling, and NOT called from)
+    `app/api/deps.py:get_auth_service` — this stage adds the factory, the
+    next stage adds the FastAPI dependency (`get_account_service`, in
+    `app/api/deps.py`) and the `/auth/verify-email`, `/auth/request-
+    password-reset`, `/auth/reset-password` routes that call it."""
+    return AccountService(
+        users=SqlAlchemyUserStore(session),
+        tokens=SingleUseTokenService(SqlAlchemySingleUseTokenStore(session), now=utc_now),
+        email=get_email_sender(settings),
+        passwords=get_password_service(),
+        refresh_tokens=SqlAlchemyRefreshTokenStore(session),
+        now=utc_now,
+        events=AuditAuthEventSink(),
+        lockout=build_lockout_policy(settings, session),
+        frontend_base_url=settings.frontend_base_url,
+        verify_ttl=timedelta(seconds=settings.auth_verify_ttl_seconds),
+        reset_ttl=timedelta(seconds=settings.auth_reset_ttl_seconds),
     )
