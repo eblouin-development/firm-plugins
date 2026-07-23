@@ -69,7 +69,14 @@ class ItemViewSet(viewsets.ModelViewSet):
     PATCH rather than silently nulling out omitted fields; a client
     generated from the frozen `openapi.json` simply never calls PUT."""
 
-    queryset = Item.objects.all()
+    # `.order_by(...)`: `Item` has no default `Meta.ordering` — an
+    # unordered queryset paginates non-deterministically page-to-page
+    # (DRF's own `UnorderedObjectListWarning`), which would make `GET
+    # /items?page=2` an unreliable continuation of page 1. `created_at`
+    # (insertion order) then `id` (a stable tiebreaker for same-instant
+    # rows) gives every page a deterministic, repeatable order without
+    # requiring a model-level change to core/models.py.
+    queryset = Item.objects.all().order_by("created_at", "id")
     permission_classes = [AllowAny]
 
     def get_serializer_class(self):

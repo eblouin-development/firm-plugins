@@ -5,10 +5,10 @@ needs:
   - port: 8000 (uvicorn/gunicorn default, matching backend/fastapi)
   - Python 3.13.x + uv (no committed uv.lock — see pyproject.toml)
 exposes:
-  - the Item model + admin-free skeleton this step ships; routes/OpenAPI contract land in Step 2 (see "Conformance")
+  - the Item model + the DRF contract-emission layer (routes, serializers, ErrorEnvelope exception handler, Page paginator) — see "Conformance"
   - its co-located doc fragment: docs/fragment.md
 versions-pinned-to: references/compatibility-matrix.md
-last-verified: 2026-07-22
+last-verified: 2026-07-23
 provenance: manual
 -->
 
@@ -19,20 +19,20 @@ Postgres via psycopg, built as an **ALTERNATIVE** to `backend/fastapi` in the
 same `apps/api/` materialization slot (a project picks one backend track,
 not both). Lives at `templates/backend/django/` in this repo; scaffolding
 materializes it into a project's `apps/api/`, exactly like the FastAPI block
-does. This is Stage 4 Step 1 (#27, epic #22): project skeleton, env-driven
-settings, the `Item` contract-exemplar model + initial migration, and the
-two vendored contract sources (`error-envelope`, `pagination`) this block's
-own DRF layer reproduces the wire shape of. **DRF emission — the custom
-`EXCEPTION_HANDLER` and pagination class that actually render those
-contracts over HTTP — is explicitly out of scope for this step**; see
-"Conformance" below.
+does. Stage 4 (#27, epic #22) in two steps: Step 1 shipped the project
+skeleton, env-driven settings, the `Item` contract-exemplar model + initial
+migration, and the two vendored contract sources (`error-envelope`,
+`pagination`); **Step 2 (this state) is DRF contract-EMISSION** — the
+routes/serializers, the custom `EXCEPTION_HANDLER`, and the pagination
+class that actually render those vendored contracts over HTTP, reproducing
+`backend/fastapi`'s wire shape — see "Conformance" below.
 
 ## Contents
 - Composition contract
 - Vendored contract sources
 - App layout
 - The Item model
-- Conformance (Step 1 vs. later steps)
+- Conformance (Step 1 vs. Step 2)
 - Security
 - Database & migrations
 - Testing
@@ -118,13 +118,18 @@ hand, since that file is a deliberate subset, not a straight copy).
 manage.py                # Django's management entrypoint
 pyproject.toml            # pinned deps — see references/compatibility-matrix.md's "Backend — Django track" + the new psycopg row
 config/
-  settings.py              # env-driven Settings: SECRET_KEY/DEBUG/ALLOWED_HOSTS/DATABASE_URL, DRF placeholder
+  settings.py              # env-driven Settings: SECRET_KEY/DEBUG/ALLOWED_HOSTS/DATABASE_URL, REST_FRAMEWORK (EXCEPTION_HANDLER + DEFAULT_PAGINATION_CLASS wired)
   settings_test.py          # hermetic sqlite override for `manage.py check`/pytest — no real DB server needed
-  urls.py                    # root URLconf — empty as of this step, Step 2's DRF-router seam
+  urls.py                    # root URLconf — delegates to core.urls
   asgi.py                     # ASGI entrypoint (uvicorn)
   wsgi.py                      # WSGI entrypoint (gunicorn)
 core/                    # the Django app (INSTALLED_APPS label: "core")
   models.py                # Item model + ItemManager/ItemQuerySet (soft-delete scoping)
+  serializers.py             # ItemOut/ItemCreate/ItemUpdate + health/auth-stub serializers
+  views.py                    # ItemViewSet + health/readyz + auth-stub views
+  urls.py                      # DRF router (trailing_slash=False) + explicit health/readyz/auth paths
+  exceptions.py                 # custom EXCEPTION_HANDLER -> ErrorEnvelope
+  pagination.py                  # custom PageNumberPagination -> {items,total,page,size,pages}
   apps.py                   # CoreConfig
   migrations/
     0001_initial.py           # hand-verified-generated initial migration (see "Database & migrations")
@@ -132,6 +137,7 @@ core/                    # the Django app (INSTALLED_APPS label: "core")
     errors.py
     pagination.py
     secret_store.py
+tests/                   # conformance-proof suite — see "Testing"
 docs/
   fragment.md              # this block's machine-parseable doc fragment (see documentation-standard.md)
 ```
@@ -171,7 +177,7 @@ still create *some* index there, just not a genuinely partial one on
 backends that don't support the feature — harmless for this step's
 purposes.)
 
-## Conformance (Step 1 vs. later steps)
+## Conformance (Step 1 vs. Step 2)
 
 **Gate-1 decision (recorded in the PR's decision log):** the client-
 interchangeability guarantee this Django track works toward is **wire-
@@ -180,25 +186,47 @@ response bodies to what `backend/fastapi` serves for the same operation —
 with best-effort OpenAPI `operationId`/component-name parity, and
 Django-only client regeneration documented as an accepted, expected step
 (swapping tracks means re-running the client generator against this app's
-`/api/schema/` once Step 2+ exposes it, not necessarily getting the exact
-committed FastAPI-generated `packages/api-client` as a byte-for-byte
+`/api/schema/` once a later step exposes it, not necessarily getting the
+exact committed FastAPI-generated `packages/api-client` as a byte-for-byte
 drop-in).
 
-**What this step (Step 1) delivers toward that:** the two contract SOURCES
+**What Step 1 delivered toward that:** the two contract SOURCES
 (`core/contract/errors.py`, `core/contract/pagination.py`) that define the
-target shapes, vendored verbatim/near-verbatim — and a `Settings`/
-`REST_FRAMEWORK` skeleton with the two seams that will consume them
-(`EXCEPTION_HANDLER`, `DEFAULT_PAGINATION_CLASS`) marked as explicit `TODO`
-comments in `config/settings.py`, not built. **What this step deliberately
-does NOT do:** register any DRF view, router, serializer, or the custom
-exception handler/pagination class that would actually EMIT those contract
-shapes over HTTP. `config/urls.py`'s `urlpatterns` is empty. A later step
-(Step 2+, same issue's remaining scope) reproduces `backend/fastapi`'s
-route set (`GET/POST /items`, `GET/PATCH/DELETE /items/{id}`, `/health`,
-`/readyz`, the auth stubs) against this model, wires the exception handler
-mapping DRF's own exception types onto `ErrorEnvelope`, and wires a custom
-pagination class emitting `{items, total, page, size, pages}` instead of
-DRF's own default `{count, next, previous, results}` shape.
+target shapes, vendored verbatim/near-verbatim, plus the `Item` model — no
+DRF view/router/serializer/exception-handler/pagination-class yet.
+
+**What Step 2 (this step, #27) delivers — the DRF contract-EMISSION
+layer:** `core/serializers.py` (`ItemOut`/`ItemCreate`/`ItemUpdate` +
+health/auth-stub shapes, matched field-for-field to `packages/api-client/
+openapi.json`), `core/views.py` (`ItemViewSet` + health/readyz + auth-stub
+views, wired via `core/urls.py`/`config/urls.py` reproducing
+`backend/fastapi`'s route set — `GET/POST /items`, `GET/PATCH/DELETE
+/items/{item_id}`, `/health`, `/readyz`, the `/auth/*` stubs),
+`core/exceptions.py` (the custom `EXCEPTION_HANDLER` mapping DRF's own
+exception types — and anything unhandled — onto `ErrorEnvelope`, wired via
+`REST_FRAMEWORK["EXCEPTION_HANDLER"]`), and `core/pagination.py` (the
+custom `PageNumberPagination` subclass emitting `{items, total, page, size,
+pages}` instead of DRF's own default `{count, next, previous, results}`
+shape, wired via `REST_FRAMEWORK["DEFAULT_PAGINATION_CLASS"]`). The
+conformance-proof test suite (`tests/test_conformance_errors.py`,
+`tests/test_conformance_pagination.py`) asserts these shapes byte-equal
+against `core/contract/`'s vendored Pydantic models for the same inputs —
+not just "some 4xx"/"some paginated list".
+
+**Accepted, documented per-framework divergences** (neither is forced —
+see each source's own docstring for the full rationale):
+- `PageParams`'s `extra="forbid"` (an unrecognized query param is a hard
+  422 on FastAPI) has no DRF equivalent wired here — an unknown query
+  param is silently ignored (`core/pagination.py`).
+- `ItemViewSet.get_object()` treats a malformed (non-UUID) `item_id` path
+  segment as 404 (`core/views.py`) where FastAPI's path-typed `item_id:
+  uuid.UUID` rejects it at 422 before the handler runs — a routing-level
+  type-coercion difference, not a contract-shape one.
+- `ModelViewSet` + a router also exposes `PUT /items/{item_id}` (full
+  replace), which `openapi.json` does not define; `core/views.py`'s
+  `ItemViewSet.update()` forces partial semantics for it regardless, so a
+  stray PUT never silently nulls out omitted fields — a client generated
+  from the frozen `openapi.json` never calls it.
 
 ## Security
 
@@ -234,14 +262,31 @@ that real database via `manage.py shell`.
 
 ## Testing
 
-No test suite ships in this step — `pyproject.toml` pins `pytest`/
-`pytest-django`/`model-bakery` as dev dependencies and
-`config/settings_test.py` as the pytest-django settings module
-(`[tool.pytest.ini_options]`'s `DJANGO_SETTINGS_MODULE`), ready for Step 2+
-to write real request/response tests against once routes exist. This
-step's own verification was `manage.py check` (both hermetic-sqlite and
-real-Postgres settings) plus the manual ORM round-trip above — see this
-step's PR description for the full transcript.
+`tests/` (pytest + pytest-django + DRF's `APIClient`, all against
+`config.settings_test`'s hermetic sqlite — `[tool.pytest.ini_options]` in
+`pyproject.toml`):
+
+- `test_items.py` — basic create/list/get/update/soft-delete smoke
+  coverage (Step 2's first commit).
+- `test_conformance_errors.py` — THE conformance-proof for
+  `core/exceptions.py`: triggers a validation failure (422), a missing
+  item (404), an unauthenticated/forbidden request (401/403, via a
+  throwaway test-only route — see `tests/_conformance_urls.py`), and a
+  forced unhandled exception (500); asserts each response body equals the
+  `ErrorEnvelope` core/contract/errors.py's own model would produce for
+  the same inputs (round-tripped through `ErrorEnvelope.model_validate`
+  and, for the 404/500 cases, built directly from `NotFoundError`/
+  `AppError`). Also asserts `deleted_at` never appears in any item
+  response and `name=""` is rejected at 422.
+- `test_conformance_pagination.py` — creates N items, asserts `GET /items`
+  equals `{items, total, page, size, pages}` cross-checked against
+  `core.contract.pagination.Page.create(...)` for the same data.
+
+Verification for this step: `manage.py check` (hermetic-sqlite), `manage.py
+migrate` clean, the full pytest suite green, and `scripts/validate_plugin.py`
+0 warnings — see this step's PR description for the full transcript.
+Step 1's own real-PostgreSQL-16 verification (model + migration) is
+unchanged and not repeated here.
 
 ## Judgment calls
 

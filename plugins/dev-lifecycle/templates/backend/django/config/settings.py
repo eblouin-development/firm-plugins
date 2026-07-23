@@ -6,13 +6,14 @@ first" posture (`core/contract/secret_store.py`, vendored below) rather than
 Django's own `django-environ`/python-decouple conventions — this block has no
 dependency on either.
 
-**REST_FRAMEWORK is a placeholder as of this step.** `DEFAULT_RENDERER_CLASSES`
-is pinned to JSON-only now (references/backend/drf.md's "Browsable API": drop
-`BrowsableAPIRenderer` in prod); the custom `EXCEPTION_HANDLER` that maps DRF's
-own exceptions onto `core.contract.errors.ErrorEnvelope`, and the
-`DEFAULT_PAGINATION_CLASS` that emits `core.contract.pagination.Page`'s
-`{items, total, page, size, pages}` shape, are Step 2's job — see the `TODO`
-comments inline and this block's README, "Conformance"."""
+`DEFAULT_RENDERER_CLASSES` is pinned to JSON-only (references/backend/
+drf.md's "Browsable API": drop `BrowsableAPIRenderer` in prod). `REST_FRAMEWORK`
+also wires the custom `EXCEPTION_HANDLER` (`core/exceptions.py`) that maps
+DRF's own exceptions onto `core.contract.errors.ErrorEnvelope`, and the
+`DEFAULT_PAGINATION_CLASS` (`core/pagination.py`) that emits `core.contract.
+pagination.Page`'s `{items, total, page, size, pages}` shape — Stage 4 Step 2
+(#27) — see this block's README, "Conformance", for the full wire-identity
+target these two seams complete."""
 
 from __future__ import annotations
 
@@ -182,29 +183,30 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
 # ---------------------------------------------------------------------------
-# Django REST Framework — PLACEHOLDER as of this step (Stage 4 Step 2,
-# #27 routes/serializers commit). JSONRenderer-only is locked in now; the
-# custom EXCEPTION_HANDLER and DEFAULT_PAGINATION_CLASS that make this
-# app's wire responses match the FastAPI block byte-for-byte are this same
-# step's NEXT commit — see this block's README, "Conformance", and
-# error-envelope/errors.py + pagination/schema.py's own module docstrings
-# for the shapes they must reproduce.
+# Django REST Framework — Stage 4 Step 2 (#27). JSONRenderer-only has been
+# locked in since Step 1 (references/backend/drf.md's "Browsable API": drop
+# BrowsableAPIRenderer in prod). EXCEPTION_HANDLER (core/exceptions.py) and
+# DEFAULT_PAGINATION_CLASS (core/pagination.py) are what make this app's
+# wire responses match the FastAPI block byte-for-byte — see this block's
+# README, "Conformance", and error-envelope/errors.py + pagination/
+# schema.py's own module docstrings for the shapes they reproduce.
 # ---------------------------------------------------------------------------
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
-    # TODO(Stage 4 Step 2, #27): map DRF's own exception types (ValidationError,
-    # NotFound, PermissionDenied, NotAuthenticated, Throttled, ...) onto
-    # core.contract.errors.ErrorEnvelope via a custom EXCEPTION_HANDLER, so this
+    # Maps DRF's own exception types (ValidationError, NotFound,
+    # PermissionDenied, NotAuthenticated, Throttled, ...) — and anything
+    # else unhandled — onto core.contract.errors.ErrorEnvelope, so this
     # app's error responses are wire-identical to the FastAPI block's — see
-    # core/contract/errors.py's module docstring ("ONE error shape, not two").
-    # "EXCEPTION_HANDLER": "core.exceptions.exception_handler",
-    # TODO(Stage 4 Step 2, #27): DRF's built-in PageNumberPagination emits
-    # {count, next, previous, results} — NOT this contract's {items, total,
-    # page, size, pages} shape (core.contract.pagination.Page). Wire a custom
-    # pagination class that emits the latter before enabling this.
-    # "DEFAULT_PAGINATION_CLASS": "core.pagination.ContractPageNumberPagination",
-    # "PAGE_SIZE": 20,
+    # core/exceptions.py's own module docstring for the full mapping table
+    # and core/contract/errors.py's ("ONE error shape, not two").
+    "EXCEPTION_HANDLER": "core.exceptions.exception_handler",
+    # DRF's built-in PageNumberPagination emits {count, next, previous,
+    # results} — NOT this contract's {items, total, page, size, pages}
+    # shape (core.contract.pagination.Page). This class emits the latter —
+    # see core/pagination.py.
+    "DEFAULT_PAGINATION_CLASS": "core.pagination.ContractPageNumberPagination",
+    "PAGE_SIZE": 20,
 }
