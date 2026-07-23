@@ -31,6 +31,11 @@ output "cloudfront_distribution_id" {
   value       = module.static_site.cloudfront_distribution_id
 }
 
+output "static_bucket_name" {
+  description = "Static-site S3 bucket name (for `aws s3 sync` in the deploy script)."
+  value       = module.static_site.bucket_name
+}
+
 output "app_secret_arns" {
   description = "Map of app env var name -> Secrets Manager ARN (DATABASE_URL, JWT_SIGNING_KEY, SMTP_*). Injected into the task via valueFrom; also the deploy role's GetSecretValue scope."
   value       = local.app_secret_arns
