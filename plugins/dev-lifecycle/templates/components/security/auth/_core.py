@@ -1333,6 +1333,7 @@ class AccountService:
         now: Callable[[], datetime],
         *,
         events: AuthEventSink | None = None,
+        lockout: LockoutPolicy | None = None,
         frontend_base_url: str,
         verify_ttl: timedelta = timedelta(hours=24),
         reset_ttl: timedelta = timedelta(hours=1),
@@ -1344,6 +1345,17 @@ class AccountService:
         self._refresh_tokens = refresh_tokens
         self._now = now
         self._events = events
+        # Optional -- shared with the `AuthService` a project wires against
+        # the SAME `LockoutStore`, so a successful `reset_password` below can
+        # lift a lockout the user accrued from failed guesses BEFORE
+        # resetting. Without this, a legitimate user who forgot their
+        # password, tripped the lockout guessing, then reset it, would still
+        # be blocked at `AuthService.login`'s is-locked check (step 3) for
+        # the remaining cooldown despite now holding the correct password --
+        # a password reset is meant to RESTORE access, so it clears the lock.
+        # `None` (the default) simply skips that clear -- a project not using
+        # lockout, or wiring `AccountService` in isolation, is unaffected.
+        self._lockout = lockout
         self._frontend_base_url = frontend_base_url.rstrip("/")
         self._verify_ttl = verify_ttl
         self._reset_ttl = reset_ttl
@@ -1450,10 +1462,13 @@ class AccountService:
         family the user has (`RefreshTokenStore.revoke_all_for_user`) --
         killing every existing logged-in session everywhere, since
         whatever was true about the account's security under the OLD
-        password can no longer be assumed once it's been reset. Emits
-        `auth.password.reset_completed` on success, `auth.password.
-        reset_failed` (actor `"unknown"`) on a bad/expired/reused token,
-        re-raising `InvalidSingleUseToken` unchanged either way."""
+        password can no longer be assumed once it's been reset. Finally,
+        if a `lockout` policy was wired, clears any failed-login lockout on
+        the account (see `__init__`'s `lockout` note) so the reset restores
+        access immediately. Emits `auth.password.reset_completed` on
+        success, `auth.password.reset_failed` (actor `"unknown"`) on a
+        bad/expired/reused token, re-raising `InvalidSingleUseToken`
+        unchanged either way."""
         try:
             user_id = await self._tokens.consume(raw_token, "reset")
         except InvalidSingleUseToken:
@@ -1463,5 +1478,13 @@ class AccountService:
         new_hash = self._passwords.hash(new_password)
         await self._users.set_password_hash(user_id, new_hash)
         await self._refresh_tokens.revoke_all_for_user(user_id)
+        # Lift any failed-login lockout the user accrued before resetting --
+        # a completed reset (proving control of the account's email) should
+        # restore access immediately, not leave the user blocked at login's
+        # is-locked check for the remaining cooldown. No-op when lockout
+        # isn't wired. Ordered AFTER the session revocation above so a reset
+        # both invalidates old credentials/sessions AND unblocks the new one.
+        if self._lockout is not None:
+            await self._lockout.clear(user_id)
         if self._events is not None:
             await self._events.emit("auth.password.reset_completed", actor=user_id, outcome="success")

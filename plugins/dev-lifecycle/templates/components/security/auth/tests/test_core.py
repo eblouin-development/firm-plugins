@@ -982,6 +982,56 @@ async def test_account_service_reset_password_changes_hash_and_revokes_sessions(
 
 
 @pytest.mark.asyncio
+async def test_reset_password_clears_an_active_lockout(
+    core_mod,
+    user_store,
+    refresh_store,
+    password_service,
+    token_service,
+    single_use_token_service,
+    email_sender,
+    lockout_store,
+    clock,
+):
+    """A user who tripped the lockout guessing their password, then reset it,
+    must be able to log in with the NEW password immediately -- a reset
+    restores access rather than leaving them blocked at login's is-locked
+    check for the remaining cooldown. AuthService and AccountService share
+    the one LockoutPolicy/store, so reset_password's clear lifts the lock."""
+    policy = core_mod.LockoutPolicy(
+        lockout_store, max_failures=3, lockout_duration=timedelta(minutes=15), window=timedelta(minutes=10), now=clock
+    )
+    auth = core_mod.AuthService(user_store, refresh_store, password_service, token_service, clock, lockout=policy)
+    account = core_mod.AccountService(
+        user_store,
+        single_use_token_service,
+        email_sender,
+        password_service,
+        refresh_store,
+        clock,
+        lockout=policy,
+        frontend_base_url="https://app.example.com",
+    )
+    await auth.register("alice@example.com", "old-password-1")
+
+    for _ in range(3):
+        with pytest.raises(core_mod.InvalidCredentials):
+            await auth.login("alice@example.com", "wrong-password")
+    user = await user_store.get_by_email("alice@example.com")
+    assert await policy.is_locked(user.id) is True
+
+    # Reset WITHOUT advancing the clock -- the lock is still active.
+    await account.request_password_reset("alice@example.com")
+    raw_token = email_sender.sent[-1].body.split("token=")[1].splitlines()[0]
+    await account.reset_password(raw_token, "new-password-2")
+
+    # The lock is lifted and the new password works right away.
+    assert await policy.is_locked(user.id) is False
+    pair = await auth.login("alice@example.com", "new-password-2")
+    assert pair.access
+
+
+@pytest.mark.asyncio
 async def test_account_service_reset_password_bad_token_raises_and_does_not_touch_the_account(
     core_mod, auth_service, account_service, user_store
 ):
