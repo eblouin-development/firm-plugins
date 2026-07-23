@@ -9,6 +9,12 @@ dependencies = [
   "django==5.2.*",
   "djangorestframework==3.17.*",
   "drf-spectacular==0.30.*",
+  # core/contract/{errors,pagination,secret_store}.py (vendored) are Pydantic
+  # v2 models/dataclasses — pinned to the same line
+  # references/compatibility-matrix.md's Backend — Python row locks
+  # (2.13.x), even on the Django track, since these three files are
+  # byte-copies of that shared, framework-neutral contract source.
+  "pydantic==2.13.*",
   # Postgres driver — Django 5.2's `django.db.backends.postgresql` engine
   # auto-detects psycopg2 or psycopg (v3), and Django 5.2 prefers psycopg 3
   # per the matrix note; pin the `binary` extra so no local libpq headers /
