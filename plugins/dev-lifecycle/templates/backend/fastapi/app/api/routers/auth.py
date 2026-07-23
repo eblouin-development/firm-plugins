@@ -17,26 +17,47 @@ only `sub`/`roles`/`jti`/timestamps, not a full user profile — see that
 dataclass's own docstring.
 
 Every `_core.AuthError` subclass (`InvalidCredentials`, `InvalidToken`,
-`TokenReused`, `EmailAlreadyExists`) raised by any handler below is left
-UNCAUGHT here — `app/main.py`'s `create_app()` registers a handler for the
-`AuthError` base class that renders the vendored component's
-`AUTH_ERROR_HTTP` mapping as this app's own `ErrorEnvelope`. No handler
-below ever constructs an `ErrorEnvelope`/`AppError` itself.
+`TokenReused`, `EmailAlreadyExists`, `InvalidSingleUseToken`) raised by any
+handler below is left UNCAUGHT here — `app/main.py`'s `create_app()`
+registers a handler for the `AuthError` base class that renders the
+vendored component's `AUTH_ERROR_HTTP` mapping as this app's own
+`ErrorEnvelope`. No handler below ever constructs an `ErrorEnvelope`/
+`AppError` itself.
+
+Stage 5c (#45) adds the account-lifecycle surface — `POST /auth/verify-
+email`, `POST /auth/request-password-reset`, `POST /auth/reset-password`
+— against the vendored `AccountService` (`app/api/deps.py:
+get_account_service`), and gives `register` a post-registration side
+effect: it now also sends a verification email (`AccountService.
+request_email_verification`) and emits an `auth.register` audit event.
+`login`'s own behavior (the verification gate, lockout, and its own audit
+events) is entirely `AuthService`'s job as of `app/api/deps.py:
+get_auth_service`'s Stage 5c wiring — this file's `login` handler itself
+is byte-for-byte unchanged from Stage 5a.
 """
 
 from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_auth_service, get_current_principal
+from app.api.deps import get_account_service, get_auth_service, get_current_principal
 from app.core.db import get_db
 from app.core.errors import ErrorEnvelope
-from app.core.security.auth import AccessClaims, AuthService, InvalidToken
-from app.core.security.auth.stores import SqlAlchemyUserStore
-from app.schemas.auth import LoginRequest, PrincipalOut, RefreshRequest, RegisterRequest, TokenResponse
+from app.core.security.auth import AccessClaims, AccountService, AuthService, InvalidToken
+from app.core.security.auth.stores import AuditAuthEventSink, SqlAlchemyUserStore
+from app.schemas.auth import (
+    LoginRequest,
+    PrincipalOut,
+    RefreshRequest,
+    RegisterRequest,
+    RequestPasswordResetRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+    VerifyEmailRequest,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -57,6 +78,26 @@ _UNAUTHENTICATED_RESPONSE = {
     401: {"model": ErrorEnvelope, "description": "Invalid credentials, or an invalid/expired/revoked token."}
 }
 _CONFLICT_RESPONSE = {409: {"model": ErrorEnvelope, "description": "An account with this email already exists."}}
+# Stage 5c (#45): documents the 401 an invalid/expired/reused single-use
+# (verify or reset) token produces -- `_core.InvalidSingleUseToken` maps to
+# the SAME (401, "unauthenticated") entry in `AUTH_ERROR_HTTP` every other
+# auth failure does (see that exception's own docstring on why "bad token",
+# "expired token", and "already-used token" all collapse to one generic,
+# wire-indistinguishable response), so this reuses the exact envelope shape
+# `_UNAUTHENTICATED_RESPONSE` above already documents, just with wording
+# specific to a single-use link rather than a login/refresh credential.
+_INVALID_SINGLE_USE_TOKEN_RESPONSE = {
+    401: {"model": ErrorEnvelope, "description": "The verify/reset link is invalid, expired, or has already been used."}
+}
+# Stage 5c (#45): every route in this file with a JSON request body already
+# gets FastAPI's native 422 automatically, remapped to this app's
+# `ErrorEnvelope` shape by `app/main.py`'s `_install_error_envelope_openapi`
+# (applied uniformly across every operation, not per-route) -- this
+# constant exists purely so the three new account-lifecycle routes'
+# `responses=` declarations are self-documenting about that already-real
+# behavior, matching this task's own explicit contract, even though the
+# schema content itself is fixed up centrally either way.
+_VALIDATION_RESPONSE = {422: {"model": ErrorEnvelope, "description": "Request validation failed."}}
 
 
 @router.post(
@@ -69,11 +110,24 @@ _CONFLICT_RESPONSE = {409: {"model": ErrorEnvelope, "description": "An account w
 async def register(
     payload: RegisterRequest,
     auth_service: AuthService = Depends(get_auth_service),
+    account_service: AccountService = Depends(get_account_service),
 ) -> PrincipalOut:
     """Delegates straight to `AuthService.register` — raises
     `EmailAlreadyExists` (-> 409 `conflict`) for a duplicate normalized
-    email, uncaught here (see module docstring)."""
+    email, uncaught here (see module docstring).
+
+    Stage 5c (#45): on success, additionally (a) sends a verification email
+    (`AccountService.request_email_verification(user)` — the freshly
+    created `UserRecord` `AuthService.register` just returned, so no extra
+    lookup is needed) and (b) emits an `auth.register` audit event. Neither
+    changes this endpoint's response shape (still 201 `PrincipalOut`) — a
+    project whose `Settings.auth_require_email_verification` is `True`
+    (the secure default) needs the caller to actually consume the emailed
+    link (`POST /auth/verify-email`) before `AuthService.login` will let
+    this account in; see that dependency's own docstring."""
     user = await auth_service.register(payload.email, payload.password)
+    await account_service.request_email_verification(user)
+    await AuditAuthEventSink().emit("auth.register", actor=user.id, outcome="success")
     return PrincipalOut(id=uuid.UUID(user.id), email=user.email)
 
 
@@ -149,3 +203,85 @@ async def me(
     if user is None:
         raise InvalidToken("This token no longer maps to an active user.")
     return PrincipalOut(id=uuid.UUID(user.id), email=user.email)
+
+
+# ---------------------------------------------------------------------------
+# Account lifecycle (Stage 5c, #45): verify-email / request-password-reset /
+# reset-password, against the vendored AccountService.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/verify-email",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Verify email",
+    responses={**_INVALID_SINGLE_USE_TOKEN_RESPONSE, **_VALIDATION_RESPONSE},
+)
+async def verify_email(
+    payload: VerifyEmailRequest,
+    account_service: AccountService = Depends(get_account_service),
+) -> None:
+    """Delegates to `AccountService.verify_email` — raises
+    `InvalidSingleUseToken` (-> 401 `unauthenticated`, generic and
+    wire-identical to every other single-use-token rejection reason — see
+    that exception's own docstring) for an unknown/expired/already-used/
+    wrong-purpose token, uncaught here (see module docstring). On success,
+    marks the token's owning user's email verified — see `AuthService.
+    login`'s `require_verification` gate (`app/api/deps.py:
+    get_auth_service`) for why that matters: with `Settings.
+    auth_require_email_verification=True` (the default), login for this
+    account was refused (generically, as `InvalidCredentials`) until this
+    endpoint succeeds."""
+    await account_service.verify_email(payload.token)
+
+
+@router.post(
+    "/request-password-reset",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request password reset",
+    responses=_VALIDATION_RESPONSE,
+)
+async def request_password_reset(
+    payload: RequestPasswordResetRequest,
+    account_service: AccountService = Depends(get_account_service),
+) -> Response:
+    """Delegates to `AccountService.request_password_reset` — that method
+    NEVER raises and never reveals whether `payload.email` has an account
+    (see its own docstring on the anti-user-enumeration defense this
+    mirrors from `AuthService.login`'s own `InvalidCredentials`), so this
+    handler ALWAYS returns 202 with a genuinely EMPTY body (`Response(...,
+    content=b"")`, not FastAPI's default JSON-encoded `null` a bare
+    `return None` with no `response_model` would send instead — a
+    byte-identical, content-free response is the strongest form of "this
+    endpoint reveals nothing" for a known email and an unknown one alike),
+    never a 404/409 that would leak account existence. A `422` (declared
+    above) is the one response shape this endpoint CAN still send, for a
+    request body that fails `RequestPasswordResetRequest`'s own schema
+    validation (e.g. an empty `email` string) before this handler body ever
+    runs."""
+    await account_service.request_password_reset(payload.email)
+    return Response(status_code=status.HTTP_202_ACCEPTED, content=b"")
+
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Reset password",
+    responses={**_INVALID_SINGLE_USE_TOKEN_RESPONSE, **_VALIDATION_RESPONSE},
+)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    account_service: AccountService = Depends(get_account_service),
+) -> None:
+    """Delegates to `AccountService.reset_password` — raises
+    `InvalidSingleUseToken` (-> 401 `unauthenticated`, generic — see
+    `verify_email`'s docstring above for the identical rationale) for an
+    unknown/expired/already-used/wrong-purpose reset token, uncaught here.
+    On success, revokes EVERY refresh-token family the user has (every
+    device/session is logged out, not just the one that requested the
+    reset — see `AccountService.reset_password`'s own docstring) and, if a
+    lockout policy is wired, lifts any failed-login lockout on the
+    account — the same shared-session `LockoutPolicy` `app/api/deps.py:
+    get_auth_service`'s `AuthService.login` recorded against, so the reset
+    account can log in with its new password immediately."""
+    await account_service.reset_password(payload.token, payload.new_password)
