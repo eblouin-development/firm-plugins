@@ -16,13 +16,15 @@ already does for its own bespoke config, bypassing that cache entirely."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.pool import StaticPool
 
-from app.core.db import configure_engine
+from app.core.db import configure_engine, get_sessionmaker
 from app.core.db.session import _reset_engine_for_tests
 from app.main import create_app
 
@@ -33,6 +35,7 @@ from .conftest import _test_lifespan
 # builds its own app/engine (rather than reusing the `client` fixture)
 # needs this too.
 import app.models  # noqa: F401,E402
+from app.models.user import User  # noqa: E402
 
 _TEST_SIGNING_KEY = "hermetic-test-signing-key-do-not-use-in-prod"
 
@@ -200,6 +203,97 @@ def test_refresh_token_reuse_is_detected_and_kills_the_whole_family(auth_client:
     second_refresh = auth_client.post("/auth/refresh", json={"refresh_token": rotated["refresh_token"]})
     assert second_refresh.status_code == 401
     assert second_refresh.json()["error"]["code"] == "unauthenticated"
+
+
+# ---------------------------------------------------------------------------
+# soft-deleted (deactivated) user -> auth fails CLOSED, not open
+# ---------------------------------------------------------------------------
+
+
+async def _soft_delete_user_by_email(email: str) -> None:
+    """Soft-deletes the `User` row matching `email` directly through this
+    app's own DB session/engine (`app.core.db.get_sessionmaker`, already
+    configured by whichever `make_client(...)` call the calling test's
+    fixture made) -- exercises `SoftDeleteMixin.mark_deleted()`, the exact
+    mutation `AsyncRepository.delete()` itself calls, without needing a
+    real "deactivate user" API endpoint (this app doesn't have one yet;
+    that's a separate, later feature -- this test only needs the ROW in
+    the deactivated state `stores.py`'s auth lookups must now honor)."""
+    session_factory = get_sessionmaker()
+    async with session_factory() as session:
+        result = await session.execute(select(User).where(User.email == email))
+        user = result.scalar_one()
+        user.mark_deleted()
+        await session.commit()
+
+
+def test_soft_deleted_user_cannot_login_or_refresh(auth_client: TestClient) -> None:
+    """FIX (whole-PR review, Stage 5a, security MEDIUM): a soft-deleted
+    (deactivated) user must NOT be able to log in, and a refresh token
+    issued BEFORE deactivation must NOT be usable afterward -- both
+    `SqlAlchemyUserStore.get_by_email`/`get_by_id` now apply
+    `User.not_deleted()`, matching `AsyncRepository`'s own default. Does
+    NOT assert `/auth/me` with the pre-deletion ACCESS token is rejected
+    -- that token remains valid until its own expiry, by design (stateless
+    JWTs -- see `stores.py`'s comment on this exact point)."""
+    _register(auth_client)
+    tokens = _login(auth_client)
+
+    asyncio.run(_soft_delete_user_by_email("alice@example.com"))
+
+    login_response = auth_client.post(
+        "/auth/login", json={"email": "alice@example.com", "password": "correct horse battery staple"}
+    )
+    assert login_response.status_code == 401
+    assert login_response.json()["error"]["code"] == "unauthenticated"
+
+    refresh_response = auth_client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert refresh_response.status_code == 401
+    assert refresh_response.json()["error"]["code"] == "unauthenticated"
+
+
+# ---------------------------------------------------------------------------
+# FIX (whole-PR review, Stage 5a, security LOW): reuse vs. an ordinary
+# invalid refresh token must be WIRE-INDISTINGUISHABLE -- `_auth_error_
+# handler` no longer echoes `str(exc)` for the 401 bucket.
+# ---------------------------------------------------------------------------
+
+
+def test_reuse_and_invalid_refresh_responses_are_wire_indistinguishable(auth_client: TestClient) -> None:
+    """Drives a genuine reuse (rotate once, then replay the used token) and
+    an ordinary invalid-token refresh (a well-formed-looking but unknown
+    token), and asserts both land on the exact SAME response body -- not
+    merely the same status/code, but byte-identical, including `message`.
+    Also asserts the reuse body contains none of "reuse"/"revoked"/
+    "family" -- the substrings `_core.TokenReused`'s own message carries,
+    which must never reach the client (see `_core.py`'s `TokenReused`
+    docstring and `_auth_error_handler`'s updated docstring in
+    `app/main.py`)."""
+    _register(auth_client)
+    original = _login(auth_client)
+
+    first_refresh = auth_client.post("/auth/refresh", json={"refresh_token": original["refresh_token"]})
+    assert first_refresh.status_code == 200
+
+    # REUSE: replay the already-used original refresh token.
+    reuse_response = auth_client.post("/auth/refresh", json={"refresh_token": original["refresh_token"]})
+    assert reuse_response.status_code == 401
+    reuse_body = reuse_response.json()
+
+    # ORDINARY invalid token: a well-formed-looking but entirely unknown
+    # token (never issued by this app, so `TokenService.decode_refresh`
+    # rejects it as a bad signature -- a different `InvalidToken` failure
+    # mode than reuse, but must render identically).
+    invalid_response = auth_client.post("/auth/refresh", json={"refresh_token": "not-even-a-jwt"})
+    assert invalid_response.status_code == 401
+    invalid_body = invalid_response.json()
+
+    assert reuse_body == invalid_body
+
+    reuse_message = reuse_body["error"]["message"].lower()
+    assert "reuse" not in reuse_message
+    assert "revoked" not in reuse_message
+    assert "family" not in reuse_message
 
 
 # ---------------------------------------------------------------------------

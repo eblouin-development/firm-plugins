@@ -173,11 +173,32 @@ def _auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
     can raise has one) still fails SAFELY closed, at 401
     `unauthenticated` — the same posture as an actually-invalid token,
     never a 500 that would leak "this specific auth exception type wasn't
-    wired up" as an implementation detail."""
+    wired up" as an implementation detail.
+
+    FIX (whole-PR review, Stage 5a): the 401 (`unauthenticated`) bucket
+    emits a SINGLE fixed, generic client message, never `str(exc)` — see
+    `_core.py`'s `TokenReused` docstring: "A client must not be able to
+    distinguish 'reuse was detected and your whole session was killed'
+    from 'this token was simply invalid' from the wire response alone."
+    `_core.py` raises genuinely distinct messages within that same 401
+    bucket (`TokenReused("...reuse detected -- the token family has been
+    revoked.")` vs `InvalidToken("Refresh token has expired.")` vs
+    `InvalidToken("Refresh token has been revoked.")`, etc.) — echoing
+    `str(exc)` straight to the client, as this handler used to
+    unconditionally do, would let an attacker replaying a stolen refresh
+    token read "reuse detected" in the response body and confirm their
+    token was burned, directly violating that contract. Every 401 auth
+    failure (bad password, unknown/expired/revoked/malformed token, AND
+    reuse) is therefore byte-identical on the wire. `conflict` (409,
+    `EmailAlreadyExists`) and `permission_denied` (403, `InsufficientRole`)
+    keep echoing `str(exc)` — neither carries a secret the way a
+    refresh-token failure's exact cause does. `str(exc)` remains available
+    server-side (it's still on `exc`) for logging/audit; this only changes
+    what reaches the CLIENT."""
     status_code, code_str = AUTH_ERROR_HTTP.get(type(exc), (401, ErrorCode.UNAUTHENTICATED.value))
-    envelope = ErrorEnvelope(
-        error=ErrorBody(code=ErrorCode(code_str), message=str(exc) or "Authentication failed.")
-    )
+    code = ErrorCode(code_str)
+    message = "Authentication failed." if code is ErrorCode.UNAUTHENTICATED else (str(exc) or "Authentication failed.")
+    envelope = ErrorEnvelope(error=ErrorBody(code=code, message=message))
     return JSONResponse(status_code=status_code, content=envelope.model_dump(mode="json"))
 
 

@@ -92,8 +92,31 @@ class SqlAlchemyUserStore:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    # SECURITY (soft-delete auth bypass fix): both lookups below
+    # deliberately honor soft-delete, matching `AsyncRepository._base_select`'s
+    # own default (`include_deleted=False`) -- the rest of this app already
+    # treats `deleted_at IS NOT NULL` as "gone", and these two auth lookups
+    # are the ONLY reads of `User` that bypass `AsyncRepository` entirely
+    # (they're constructed directly against `select(User)`, per this
+    # store's own class docstring), so they must apply `User.not_deleted()`
+    # by hand rather than inherit it for free. Without this, deactivating a
+    # user (soft-deleting their row) would NOT revoke their ability to log
+    # in (`get_by_email`, via `AuthService.login`) or to refresh
+    # (`get_by_id`, via `AuthService.refresh` step 6) -- auth would fail
+    # OPEN on deactivation instead of closed.
+    #
+    # NOTE (do NOT try to "fix"): an already-issued, not-yet-expired
+    # *access* token remains valid until its own expiry even after this
+    # change, because access tokens are stateless JWTs --
+    # `AuthService.resolve_access` only decodes and verifies the token's
+    # own signature/claims, it never re-checks the store. This is standard
+    # JWT behavior, bounded by the short-lived `jwt_access_ttl_seconds`
+    # (900s default) -- refresh denial (this fix) is what actually stops
+    # session continuation past that point; there is no way to revoke a
+    # single already-minted access token early without turning it into a
+    # stateful token (out of scope here).
     async def get_by_email(self, email: str) -> UserRecord | None:
-        result = await self._session.execute(select(User).where(User.email == email))
+        result = await self._session.execute(select(User).where(User.email == email, User.not_deleted()))
         user = result.scalar_one_or_none()
         return _user_to_record(user) if user is not None else None
 
@@ -106,7 +129,15 @@ class SqlAlchemyUserStore:
             # `_core.AuthService.refresh`'s own "user gone -> InvalidToken"
             # handling of a genuinely-missing row.
             return None
-        user = await self._session.get(User, user_id)
+        # Was `self._session.get(User, user_id)` -- a bare PK fetch that
+        # bypasses soft-delete entirely (`Session.get` has no filtering
+        # concept). Replaced with an explicit `select()` + `not_deleted()`
+        # so a soft-deleted user's id resolves to "not found" here too,
+        # same as `get_by_email` above -- `AuthService.refresh` step 6
+        # then raises `InvalidToken`, consistent with its existing "user
+        # gone" handling of a genuinely-missing row.
+        result = await self._session.execute(select(User).where(User.id == user_id, User.not_deleted()))
+        user = result.scalar_one_or_none()
         return _user_to_record(user) if user is not None else None
 
     async def create(self, email: str, password_hash: str, roles: Sequence[str]) -> UserRecord:
