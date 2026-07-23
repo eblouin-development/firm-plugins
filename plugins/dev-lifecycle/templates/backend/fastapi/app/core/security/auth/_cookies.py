@@ -166,7 +166,21 @@ def verify_double_submit(*, csrf_cookie: str | None, csrf_header: str | None) ->
     header or cookie) never reaches `compare_digest` (which requires two
     `str`, or two `bytes`, arguments -- a `None` would raise `TypeError`,
     not the intended `CsrfValidationError`)."""
-    ok = bool(csrf_header) and bool(csrf_cookie) and hmac.compare_digest(csrf_header, csrf_cookie)
+    # `.encode("utf-8")` both operands before the constant-time compare: an
+    # attacker-controlled `X-CSRF-Token` header can carry non-ASCII bytes
+    # (HTTP header values decode as latin-1), and `hmac.compare_digest`
+    # raises `TypeError` on a non-ASCII `str` -- which would surface as a
+    # 500 rather than the intended 403. Comparing the UTF-8 byte encodings
+    # never raises on content, so any malformed/non-ASCII header simply
+    # fails the match and falls through to `CsrfValidationError` (403), the
+    # same fail-closed outcome as any other mismatch. `secrets.token_urlsafe`
+    # (the cookie side) is always ASCII, so this only ever matters for the
+    # attacker-supplied header.
+    ok = (
+        bool(csrf_header)
+        and bool(csrf_cookie)
+        and hmac.compare_digest(csrf_header.encode("utf-8"), csrf_cookie.encode("utf-8"))
+    )
     if not ok:
         raise CsrfValidationError(
             "CSRF validation failed: the X-CSRF-Token header is missing, blank, "

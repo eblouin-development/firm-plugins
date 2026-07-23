@@ -46,6 +46,22 @@ def test_mismatch_raises(cookies_mod):
         cookies_mod.verify_double_submit(csrf_cookie="token-a", csrf_header="token-b")
 
 
+def test_non_ascii_header_fails_closed_to_csrf_error_not_typeerror(cookies_mod):
+    # HTTP header values decode as latin-1, so an attacker can send an
+    # X-CSRF-Token with non-ASCII bytes. hmac.compare_digest raises
+    # TypeError on a non-ASCII str (which would surface as a 500); the
+    # UTF-8-encode before comparing must instead make this fail closed to
+    # CsrfValidationError (403), like any other mismatch -- never a 500.
+    with pytest.raises(cookies_mod.CsrfValidationError):
+        cookies_mod.verify_double_submit(csrf_cookie="an-ascii-token", csrf_header="\xff\xfe\x80")
+
+
+def test_non_ascii_header_matching_a_non_ascii_cookie_still_passes(cookies_mod):
+    # Defensive: even if both sides somehow carry the identical non-ASCII
+    # value, the UTF-8-encoded compare must not raise -- it compares equal.
+    cookies_mod.verify_double_submit(csrf_cookie="tök\xffen", csrf_header="tök\xffen")
+
+
 def test_both_missing_raises(cookies_mod):
     with pytest.raises(cookies_mod.CsrfValidationError):
         cookies_mod.verify_double_submit(csrf_cookie=None, csrf_header=None)
@@ -88,7 +104,9 @@ def test_uses_hmac_compare_digest_not_dunder_eq(cookies_mod, monkeypatch):
     # invoked -- not just that behavior happens to match `==`. Patches
     # `hmac.compare_digest` (as imported into the `_cookies` module) with a
     # spy that still delegates to the real implementation, and asserts it
-    # was called with exactly the header/cookie pair.
+    # was called with the header/cookie pair as UTF-8 BYTES (the module
+    # encodes both operands before comparing, so a non-ASCII header can't
+    # make compare_digest raise TypeError -- see verify_double_submit).
     calls = []
     real_compare_digest = hmac.compare_digest
 
@@ -98,7 +116,7 @@ def test_uses_hmac_compare_digest_not_dunder_eq(cookies_mod, monkeypatch):
 
     monkeypatch.setattr(cookies_mod.hmac, "compare_digest", spy)
     cookies_mod.verify_double_submit(csrf_cookie="same-token", csrf_header="same-token")
-    assert calls == [("same-token", "same-token")]
+    assert calls == [(b"same-token", b"same-token")]
 
 
 def test_compare_digest_not_called_when_header_missing(cookies_mod, monkeypatch):
