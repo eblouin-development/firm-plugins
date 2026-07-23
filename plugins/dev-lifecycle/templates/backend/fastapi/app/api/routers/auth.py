@@ -124,9 +124,36 @@ async def register(
     project whose `Settings.auth_require_email_verification` is `True`
     (the secure default) needs the caller to actually consume the emailed
     link (`POST /auth/verify-email`) before `AuthService.login` will let
-    this account in; see that dependency's own docstring."""
+    this account in; see that dependency's own docstring.
+
+    Adversarial-review fix (M2): `request_email_verification` is wrapped in
+    `try/except Exception` — the user row is already durably committed by
+    the time this runs (`AuthService.register` returned successfully), so
+    a verification-email failure here (SMTP outage, bounced address) must
+    NEVER turn into a 500: the account already exists, a retry would just
+    409 on the duplicate email, `require_verification=True` means the
+    account can't log in either way, and the wire caller (whoever showed
+    the registration form) has no way to "undo" or recover a 500 here —
+    it would brick a just-created account with no path forward. Register
+    stays 201 regardless of whether the email actually went out; the
+    failure is only logged/audited (`auth.register.verification_email_
+    failed`, no PII/token in the event), never surfaced to the caller. The
+    recovery path for an account whose verification email never arrived is
+    `POST /auth/request-password-reset` -> `POST /auth/reset-password` —
+    `AccountService.reset_password` now also marks the email verified (see
+    `_core.AccountService.reset_password`'s own docstring), so a user who
+    never got their verification link can still get into their account."""
     user = await auth_service.register(payload.email, payload.password)
-    await account_service.request_email_verification(user)
+    try:
+        await account_service.request_email_verification(user)
+    except Exception:
+        # M2: never let a verification-email delivery failure 500 an
+        # already-committed registration -- see this handler's own
+        # docstring above. No PII/token in this event -- just that it
+        # happened, for a human to notice and, if needed, resend by hand.
+        await AuditAuthEventSink().emit(
+            "auth.register.verification_email_failed", actor=user.id, outcome="failure"
+        )
     await AuditAuthEventSink().emit("auth.register", actor=user.id, outcome="success")
     return PrincipalOut(id=uuid.UUID(user.id), email=user.email)
 

@@ -520,6 +520,55 @@ and `auth_reset_ttl_seconds` (default 1h, deliberately shorter — an
 unconsumed reset link is more sensitive to have floating around) bound how
 long each stays valid.
 
+**Email delivery is non-fatal and fire-and-forget (adversarial-review
+fix).** A failed or slow email send can never change an endpoint's HTTP
+response:
+
+- `AccountService.request_password_reset`'s known-email branch (`_core.py`)
+  catches any `EmailSender.send()` failure internally and still returns
+  `None` — `POST /auth/request-password-reset` always 202s, byte-identical
+  for a known and an unknown email, even if delivery to a known address
+  failed. Without this, an SMTP failure would 500 the known-email path
+  while the unknown-email path still 202'd — an account-enumeration oracle.
+- `register` (`app/api/routers/auth.py`) wraps its post-registration
+  `AccountService.request_email_verification(user)` call in `try/except` —
+  a verification-email failure is logged/audited
+  (`auth.register.verification_email_failed`) but never turns a successful
+  201 into a 500. The account already exists at that point (durably
+  committed); a 500 here would brick it with no recovery path. The
+  recovery path IS `POST /auth/request-password-reset` →
+  `POST /auth/reset-password`: `AccountService.reset_password` now also
+  marks the account's email verified (completing a reset proves control of
+  the inbox), so an account whose verification email never arrived can
+  still get in.
+- `SmtpEmailSender.send()` (`app/core/security/auth/stores.py`) SCHEDULES
+  delivery (`asyncio.create_task`) and returns immediately rather than
+  awaiting the SMTP round-trip — it never raises into a caller. Delivery
+  errors are logged (`logging.getLogger("auth.email.smtp")`, level
+  `warning`) from the background task, never propagated. This is
+  best-effort on process shutdown: a task still in flight when the process
+  exits may not complete — see that class's own docstring for the
+  accepted trade-off (a project needing a hard delivery guarantee should
+  back this with a real queue/outbox instead).
+
+**Deployment requirement — `SMTP_HOST` is not optional in production.**
+When `AUTH_REQUIRE_EMAIL_VERIFICATION=True` (the default), a real
+`SMTP_HOST` **must** be configured in every production/L3 deployment.
+Unlike `JWT_SIGNING_KEY` (which `get_token_service()` fails CLOSED on when
+unset — every auth endpoint 500s, loudly, immediately), an unset
+`SMTP_HOST` fails OPEN and quiet: the app keeps running,
+`POST /auth/register` still returns 201, existing verified accounts can
+still log in — while `get_email_sender()` silently falls back to
+`ConsoleEmailSender`, which (a) **logs raw verify/reset tokens in
+plaintext** (a real secret leak if that ever reaches a production log
+aggregator) and (b) means no user can ever receive a verification or
+reset email, so no new account can complete verification. This is
+deliberately not enforced by a runtime "are we in prod?" check (see
+`app/core/config.py`'s `smtp_host` field comment for why that class of
+check was rejected) — it is a required deploy-time configuration step:
+set `SMTP_HOST` (and `SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD`/
+`EMAIL_FROM` as the relay requires) before serving real traffic.
+
 ## Pagination
 
 `GET /items` returns `Page[ItemOut]`

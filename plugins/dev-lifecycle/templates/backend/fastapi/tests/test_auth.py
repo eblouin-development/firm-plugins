@@ -89,6 +89,24 @@ def _token_from(message: EmailMessage) -> str:
     return match.group(1)
 
 
+class _RaisingEmailSender:
+    """Adversarial-review fix (M1/M2) test double: an `EmailSender` (see
+    `_core.EmailSender`'s `Protocol`) whose `send` always raises — models a
+    misbehaving/failed delivery (SMTP outage, bounced relay, timeout) at
+    the exact seam `get_email_sender` is overridden through. Proves, at
+    the ENDPOINT contract (not just the component level — see `components/
+    security/auth/tests/test_core.py`'s equivalent `RaisingEmailSender`
+    fixture for that), that neither `POST /auth/request-password-reset`
+    nor `POST /auth/register` ever surfaces this as a 500."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def send(self, message: EmailMessage) -> None:
+        self.attempts += 1
+        raise RuntimeError("simulated delivery failure -- SMTP relay unreachable")
+
+
 @pytest.fixture()
 def email_sender() -> _CapturingEmailSender:
     return _CapturingEmailSender()
@@ -587,8 +605,11 @@ def test_reset_password_happy_path_revokes_old_sessions_and_logs_in_with_new_pas
     assert old_password_response.status_code == 401
     assert old_password_response.json()["error"]["code"] == "unauthenticated"
 
-    # New password works IMMEDIATELY -- verification status survived the
-    # reset (AccountService.reset_password never touches email_verified).
+    # New password works IMMEDIATELY -- the account was already verified
+    # pre-reset here (AccountService.reset_password also marks the email
+    # verified on every reset, whether or not it already was -- see
+    # test_reset_password_recovers_a_never_verified_account below for the
+    # case where it wasn't).
     new_password_response = auth_client.post(
         "/auth/login", json={"email": "alice@example.com", "password": "a brand new password"}
     )
@@ -602,6 +623,122 @@ def test_reset_password_happy_path_revokes_old_sessions_and_logs_in_with_new_pas
     )
     assert pre_reset_refresh_response.status_code == 401
     assert pre_reset_refresh_response.json()["error"]["code"] == "unauthenticated"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial-review fix (M1/M2): a raising EmailSender must never change
+# either endpoint's response -- request-password-reset stays 202 (byte-
+# identical to unknown-email), register stays 201 (account not bricked).
+# ---------------------------------------------------------------------------
+
+
+def test_request_password_reset_known_email_still_returns_202_when_email_send_fails(
+    make_client: Callable[..., TestClient],
+) -> None:
+    """M1, at the endpoint contract: overriding `get_email_sender` with a
+    sender whose `send` raises models an SMTP failure. The KNOWN-email
+    branch must still return 202 with an EMPTY body, byte-identical to the
+    unknown-email response — a 500 here (or any response shape difference)
+    would be exactly the account-enumeration oracle this fix closes."""
+    raising_sender = _RaisingEmailSender()
+    client = make_client(jwt_signing_key=_TEST_SIGNING_KEY)
+    client.app.dependency_overrides[get_email_sender] = lambda: raising_sender
+
+    # Register with a working sender first isn't needed here -- the user
+    # just needs to exist; verification status is irrelevant to this
+    # endpoint (it never reveals account state either way).
+    register_response = client.post(
+        "/auth/register", json={"email": "alice@example.com", "password": "correct horse battery staple"}
+    )
+    assert register_response.status_code == 201
+    assert raising_sender.attempts == 1  # the verification-email send was attempted (and failed)
+
+    known_response = client.post("/auth/request-password-reset", json={"email": "alice@example.com"})
+    unknown_response = client.post("/auth/request-password-reset", json={"email": "nobody@example.com"})
+
+    assert known_response.status_code == 202
+    assert unknown_response.status_code == 202
+    assert known_response.content == b""
+    assert unknown_response.content == b""
+    assert known_response.content == unknown_response.content
+    # The known-email branch really did attempt (and fail) a send.
+    assert raising_sender.attempts == 2
+
+
+def test_register_returns_201_when_verification_email_send_fails(
+    make_client: Callable[..., TestClient],
+) -> None:
+    """M2, at the endpoint contract: `register` must still return 201 (the
+    account is created and durably committed) even though its
+    post-registration verification-email side effect fails. Before this
+    fix, a raising sender here would 500 an otherwise-successful
+    registration."""
+    raising_sender = _RaisingEmailSender()
+    client = make_client(jwt_signing_key=_TEST_SIGNING_KEY)
+    client.app.dependency_overrides[get_email_sender] = lambda: raising_sender
+
+    response = client.post(
+        "/auth/register", json={"email": "bob@example.com", "password": "correct horse battery staple"}
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["email"] == "bob@example.com"
+    assert raising_sender.attempts == 1
+
+    # The account really was created -- a second register attempt with the
+    # same email now 409s, not another 201, proving this wasn't silently
+    # rolled back.
+    duplicate_response = client.post(
+        "/auth/register", json={"email": "bob@example.com", "password": "a different password"}
+    )
+    assert duplicate_response.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Adversarial-review fix (M2) recovery path: a registration whose
+# verification email failed to send can still recover via password reset --
+# reset_password now also marks the email verified.
+# ---------------------------------------------------------------------------
+
+
+def test_reset_password_recovers_a_never_verified_account(
+    make_client: Callable[..., TestClient], email_sender: _CapturingEmailSender
+) -> None:
+    """The end-to-end M2 recovery story: register a user, deliberately
+    never call verify-email (modeling a verification email that never
+    arrived), confirm login is blocked (401, generic -- see `_core.
+    AuthService.login`'s `require_verification` gate), then request-
+    password-reset -> reset-password -- login with the NEW password now
+    succeeds, proving `AccountService.reset_password` marked the email
+    verified even though `verify_email` was never called."""
+    client = _make_auth_client(make_client, email_sender)
+
+    register_response = client.post(
+        "/auth/register", json={"email": "carol@example.com", "password": "an original password"}
+    )
+    assert register_response.status_code == 201
+    # Deliberately no _verify(client, email_sender) call here.
+
+    blocked_response = client.post(
+        "/auth/login", json={"email": "carol@example.com", "password": "an original password"}
+    )
+    assert blocked_response.status_code == 401
+    assert blocked_response.json()["error"]["code"] == "unauthenticated"
+
+    reset_request_response = client.post("/auth/request-password-reset", json={"email": "carol@example.com"})
+    assert reset_request_response.status_code == 202
+    reset_token = _token_from(email_sender.messages[-1])
+
+    reset_response = client.post(
+        "/auth/reset-password", json={"token": reset_token, "new_password": "a freshly reset password"}
+    )
+    assert reset_response.status_code == 204
+
+    recovered_response = client.post(
+        "/auth/login", json={"email": "carol@example.com", "password": "a freshly reset password"}
+    )
+    assert recovered_response.status_code == 200
+    assert "access_token" in recovered_response.json()
 
 
 # ---------------------------------------------------------------------------

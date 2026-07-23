@@ -28,6 +28,8 @@ weekly freshness audit does not touch this file.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import smtplib
 import uuid
 from collections.abc import Sequence
@@ -551,21 +553,51 @@ def get_token_service(settings: Settings) -> TokenService:
 # ---------------------------------------------------------------------------
 
 
+_smtp_logger = logging.getLogger("auth.email.smtp")
+
+
 class SmtpEmailSender:
     """Production `_core.EmailSender` implementation — hand-rolled, stdlib
     `smtplib` + `email.message.EmailMessage` only (no third-party email
     library/pin), matching this app's "don't add a dependency for what the
     standard library already does" posture elsewhere in this catalog.
 
-    `smtplib.SMTP` is a BLOCKING, synchronous socket API — calling it
-    directly from an `async def send()` would block the whole event loop
-    (every other in-flight request) for as long as the SMTP handshake/send
-    takes. `send()` instead bridges the blocking call onto a worker thread
-    via `anyio.to_thread.run_sync` — `anyio` is already a transitive
-    dependency of FastAPI/Starlette (no new pin in `pyproject.toml` is
-    needed), and is the framework-agnostic thread-offload primitive
-    Starlette itself uses internally, so reaching for it here matches how
-    this app's own ASGI stack already handles blocking work.
+    **Fire-and-forget by contract** (adversarial-review fix, FIX 3): `send()`
+    SCHEDULES delivery (`asyncio.create_task(self._deliver(message))`) and
+    returns immediately — it does NOT await the SMTP round-trip, and it
+    NEVER raises. This is what `_core.EmailSender`'s own Protocol docstring
+    requires ("implementations MUST NOT let delivery latency or delivery
+    failure affect the caller") and what `_core.AccountService.
+    request_password_reset`'s anti-enumeration defense and `register`'s
+    M2 resilience fix (`app/api/routers/auth.py`) both depend on: neither
+    caller can tell, from `send()` returning, whether the message was
+    actually delivered — only that delivery was scheduled. `_deliver` runs
+    the actual blocking `smtplib` work on a worker thread (`anyio.to_thread.
+    run_sync` — see that method's own docstring for why) inside a
+    `try/except Exception` that logs a `warning` and swallows the error;
+    nothing ever propagates back out of the background task, because
+    nothing is awaiting it that could observe a raise or a return.
+
+    **In-flight task lifetime.** A bare `asyncio.create_task(...)` result
+    that nothing holds a reference to is eligible for garbage collection
+    mid-flight (the task can be silently cancelled before it completes —
+    see `asyncio.create_task`'s own docs on this exact footgun). `_tasks`
+    (a `set`) holds a strong reference to every task this instance has
+    scheduled for as long as it's in flight — added in `send()`, removed
+    by a `add_done_callback` once the task finishes (success OR the
+    already-caught-internally failure) — so a `send()` call's task is
+    guaranteed to actually run to completion rather than vanishing.
+
+    **Best-effort on shutdown.** This class holds no reference to the
+    app's own lifespan/shutdown sequence, so a task still in flight when
+    the process exits (a slow SMTP handshake racing a deploy) can be cut
+    off mid-delivery — that email is then simply not delivered, silently,
+    same as any other fire-and-forget background job. This is an accepted
+    trade-off for a starter-kit reference sender: a project with a hard
+    delivery guarantee should replace this with a real queue/outbox
+    (persisted, retried, survives a restart) rather than an in-process
+    `asyncio.Task`; `_core.EmailSender`'s Protocol is the seam that swap
+    happens behind, unchanged for either `AccountService` caller.
 
     Always issues `STARTTLS` before authenticating — this app never sends
     a plaintext SMTP AUTH exchange (which would leak `smtp_username`/
@@ -588,13 +620,40 @@ class SmtpEmailSender:
         self._username = username
         self._password = password
         self._from_addr = from_addr
+        # Strong references to in-flight delivery tasks -- see this class's
+        # own docstring on why a bare create_task() result can't be left to
+        # get garbage-collected mid-flight.
+        self._tasks: set[asyncio.Task[None]] = set()
 
     async def send(self, message: EmailMessage) -> None:
-        await anyio.to_thread.run_sync(self._send_sync, message)
+        """Schedules delivery and returns immediately -- does NOT await the
+        SMTP round-trip, does NOT raise. See this class's own docstring."""
+        task = asyncio.create_task(self._deliver(message))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _deliver(self, message: EmailMessage) -> None:
+        """Runs as a background task (scheduled by `send()` above), never
+        awaited by a caller. Bridges the blocking `smtplib` work onto a
+        worker thread via `anyio.to_thread.run_sync` — `anyio` is already a
+        transitive dependency of FastAPI/Starlette (no new pin in
+        `pyproject.toml` is needed), and is the framework-agnostic
+        thread-offload primitive Starlette itself uses internally, so
+        reaching for it here matches how this app's own ASGI stack already
+        handles blocking work. Any exception (a connection failure, an
+        auth rejection, a timeout) is caught here and only LOGGED — this is
+        the actual enforcement point of this class's fire-and-forget
+        contract: nothing above this method ever sees the exception,
+        because nothing above it is awaiting this coroutine at all."""
+        try:
+            await anyio.to_thread.run_sync(self._send_sync, message)
+        except Exception:
+            _smtp_logger.warning("Failed to deliver email to %s (subject=%r)", message.to, message.subject, exc_info=True)
 
     def _send_sync(self, message: EmailMessage) -> None:
-        """Runs on a worker thread (via `anyio.to_thread.run_sync` above) —
-        every call here is BLOCKING stdlib I/O, never `await`ed directly."""
+        """Runs on a worker thread (via `anyio.to_thread.run_sync` in
+        `_deliver` above) — every call here is BLOCKING stdlib I/O, never
+        `await`ed directly."""
         mime = MimeEmailMessage()
         mime["From"] = self._from_addr
         mime["To"] = message.to

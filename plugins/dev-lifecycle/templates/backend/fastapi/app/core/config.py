@@ -182,6 +182,42 @@ class Settings(AppSettings):
     # posture as jwt_signing_key above (smtp_* resolve via secret_store's
     # layered env-then-AWS-Secrets-Manager lookup, never a hardcoded
     # fallback). --------------------------------------------------------
+    # DEPLOYMENT REQUIREMENT (adversarial-review fix, FIX 4) -- NOT a
+    # code-level fail-closed check, deliberately unlike jwt_signing_key
+    # above: when auth_require_email_verification is True (the default),
+    # a real SMTP_HOST MUST be configured in every production/L3
+    # deployment. Contrast with jwt_signing_key, which FAILS CLOSED
+    # (get_token_service() refuses to construct a TokenService, surfacing
+    # as a 500, when it's unset) -- smtp_host has no equivalent guard,
+    # and deliberately isn't given one here: unlike a missing signing key
+    # (which makes EVERY auth endpoint unusable, an unmistakable, loud
+    # failure), a missing SMTP_HOST fails open and quiet -- the app keeps
+    # running, /auth/register still returns 201, /auth/login still works
+    # for already-verified accounts -- while get_email_sender() silently
+    # falls back to ConsoleEmailSender, which:
+    #   (a) LOGS raw verify/reset tokens in plaintext (see that class's own
+    #       docstring) -- a dev/test convenience that is a real secret
+    #       leak into this process's log aggregator if it ever runs that
+    #       way in production, and
+    #   (b) means delivery never actually happens for any user -- no one
+    #       can complete /auth/verify-email, so no one can ever satisfy
+    #       login's require_verification gate (short of the password-reset
+    #       recovery path, which also requires an email that was never
+    #       sent -- reset shares the same sender).
+    # A fragile runtime "are we in prod?" check (an ENVIRONMENT string
+    # comparison, a hostname sniff) was deliberately NOT added here to
+    # enforce this -- that class of check is easy to get wrong, easy to
+    # bypass by accident (a staging environment named oddly, a container
+    # running with the wrong env var), and this catalog's existing
+    # posture (see jwt_signing_key's own docstring: "don't invent a
+    # secret, fail closed at the point of use") already treats "the
+    # operator configured the required secret" as the correct point of
+    # enforcement, not a guess made from other settings. This is a
+    # REQUIRED DEPLOY STEP, not a code change: set SMTP_HOST (and
+    # SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/EMAIL_FROM as the relay
+    # requires) in every real environment before serving real traffic --
+    # see backend/fastapi/README.md's "Auth" / email seam section for the
+    # same note in operator-facing form.
     smtp_host: str | None = Field(
         default_factory=lambda: get_secret("SMTP_HOST", required=False),
         repr=False,
@@ -190,7 +226,12 @@ class Settings(AppSettings):
         "get_email_sender() falls back to ConsoleEmailSender when this is "
         "unset, exactly the 'don't invent a secret, fail closed at the "
         "point of use, not at Settings() construction' posture "
-        "jwt_signing_key's own docstring documents.",
+        "jwt_signing_key's own docstring documents. UNLIKE "
+        "jwt_signing_key, though, there is no code-level fail-closed "
+        "guard on this field -- see the comment immediately above this "
+        "field for why, and why a real SMTP_HOST is a REQUIRED "
+        "deployment step (not optional) whenever "
+        "auth_require_email_verification is True (the default).",
     )
     smtp_port: int = Field(
         default_factory=lambda: int(get_secret("SMTP_PORT", required=False, default="587")),
