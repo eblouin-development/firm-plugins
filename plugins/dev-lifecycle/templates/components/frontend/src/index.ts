@@ -19,5 +19,17 @@ export type { CreateQueryClientOptions } from "./query/createQueryClient";
 export { decodeAccessTokenClaims } from "./jwt/decodeAccessTokenClaims";
 export type { AccessTokenClaims } from "./jwt/decodeAccessTokenClaims";
 
-// --- auth (token getter for configureApiClient; provider/guards land in Step 5) ---
+// --- auth -----------------------------------------------------------------
+// `getAccessToken` is the getter the app wires into `configureApiClient`.
 export { getAccessToken } from "./auth/authBridge";
+export { AuthProvider } from "./auth/AuthProvider";
+export type { AuthProviderProps } from "./auth/AuthProvider";
+export { useAuth } from "./auth/useAuth";
+export { AuthContext } from "./auth/AuthContext";
+export type { AuthContextValue, AuthState } from "./auth/AuthContext";
+export { RequireAuth, RequireRole } from "./auth/guards";
+
+// --- forms ----------------------------------------------------------------
+export { useZodForm } from "./forms/useZodForm";
+export { FieldError } from "./forms/FieldError";
+export { applyEnvelopeToForm } from "./forms/applyEnvelopeToForm";
