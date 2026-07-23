@@ -83,7 +83,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import TypeAdapter
 
-from app.api.routers import auth, health, items
+from app.api.routers import admin, auth, health, items
 from app.core.config import Settings, get_settings
 from app.core.db import configure_engine
 from app.core.errors import AppError, ErrorBody, ErrorCode, ErrorDetail, ErrorEnvelope
@@ -388,6 +388,10 @@ def create_app(*, lifespan_ctx=lifespan, settings: Settings | None = None) -> Fa
     app.include_router(health.router)
     app.include_router(items.router)
     app.include_router(auth.router)
+    # Stage 5d (#46): the RBAC admin example -- see app/api/routers/admin.py's
+    # own module docstring for what it demonstrates and why it needs no new
+    # auth logic of its own.
+    app.include_router(admin.router)
 
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)
     app.add_exception_handler(AppError, _app_error_handler)
