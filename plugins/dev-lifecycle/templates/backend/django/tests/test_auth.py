@@ -337,6 +337,19 @@ def test_me_with_a_refresh_token_instead_of_an_access_token_returns_401(api_clie
     assert response.json()["error"]["code"] == "unauthenticated"
 
 
+def test_me_accepts_a_lowercase_bearer_scheme(api_client: APIClient) -> None:
+    """The `Authorization` scheme token is case-insensitive per RFC 7235,
+    and Starlette's `HTTPBearer` (the FastAPI side) accepts `bearer <token>`
+    — so this backend must too, or the same client breaks against one
+    backend but not the other. The token VALUE stays case-sensitive; only
+    the scheme keyword is compared case-insensitively."""
+    _register(api_client)
+    tokens = _login(api_client)
+    response = api_client.get("/auth/me", HTTP_AUTHORIZATION=f"bearer {tokens['access_token']}")
+    assert response.status_code == 200, response.content
+    assert response.json()["email"] == "alice@example.com"
+
+
 # ---------------------------------------------------------------------------
 # Auth not configured -> fails closed (500), never signs with no key
 # ---------------------------------------------------------------------------

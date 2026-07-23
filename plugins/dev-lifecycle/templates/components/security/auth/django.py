@@ -130,7 +130,12 @@ async def resolve_principal(request: Any, auth_service: Any) -> Any:
     if header is None:
         raise _core.InvalidToken("No bearer token was presented.")
     scheme, _, token = header.partition(" ")
-    if scheme != "Bearer" or not token:
+    # Scheme compared case-INSENSITIVELY (`scheme.lower()`) per RFC 7235
+    # (auth-scheme tokens are case-insensitive), matching Starlette's own
+    # `HTTPBearer` (`fastapi.py`'s side) so a client sending `bearer <token>`
+    # or `Bearer <token>` is accepted identically against BOTH backends --
+    # the token VALUE itself stays case-sensitive.
+    if scheme.lower() != "bearer" or not token:
         raise _core.InvalidToken("No bearer token was presented.")
     return await auth_service.resolve_access(token)
 

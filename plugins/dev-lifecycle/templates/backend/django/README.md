@@ -781,6 +781,24 @@ cluster itself was left as it was found (not stopped, since it wasn't
 started by this verification pass) — no DB artifacts, `.venv`, or
 `uv.lock` committed.
 
+**Operational note — persistent connections and the async-ORM bridge.**
+The `/auth/*` views are synchronous DRF views that reach the async auth
+core via `async_to_sync(...)`, and `DjangoRefreshTokenStore` runs its
+writes through Django's async ORM (`.acreate()`/`.aupdate()`). Django runs
+that async ORM SQL in a thread-sensitive executor thread, which interacts
+awkwardly with `CONN_MAX_AGE > 0` persistent connections (the default here
+is `conn_max_age=600`): a persistent connection opened in the executor
+thread can outlive the request that opened it, surfacing as intermittent
+"connection already closed" errors under load. This does **not** affect
+auth *correctness* — the reuse-detection durability guarantee holds because
+every store write autocommits (no `ATOMIC_REQUESTS`, no wrapping
+`transaction.atomic()`), verified above. It is purely a connection-
+*lifecycle* concern for a real multi-worker deployment: set
+`CONN_HEALTH_CHECKS=True` (Django 4.1+, cheap liveness check on reuse) or
+`CONN_MAX_AGE=0` behind the bridge (best paired with an external pooler
+such as PgBouncer, the usual ECS/Fargate posture) if you observe it.
+Tracked for a kit-wide hardening pass rather than changed here.
+
 **Regenerating/diffing the exported schema against the frozen contract**
 (same command Step 4's own "Conformance" section documents, now covering
 the five `/auth/*` operations too):
