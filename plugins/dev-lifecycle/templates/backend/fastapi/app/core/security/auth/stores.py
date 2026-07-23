@@ -1,7 +1,21 @@
 """App-specific SQLAlchemy-backed implementations of the vendored auth
-component's `UserStore`/`RefreshTokenStore` protocols (`_core.py`), plus
-the app-level `PasswordService`/`TokenService` construction this block's
+component's `UserStore`/`RefreshTokenStore`/`SingleUseTokenStore`/
+`LockoutStore` protocols (`_core.py`), plus the app-level
+`PasswordService`/`TokenService` construction this block's
 `app/api/deps.py:get_auth_service` binds into a per-request `AuthService`.
+
+Stage 5c (#45) additionally adds this app's `EmailSender` (`get_email_sender`
+-- `ConsoleEmailSender` in dev/test, a hand-rolled `SmtpEmailSender` once
+SMTP is configured) and `AuthEventSink` (`AuditAuthEventSink`, forwarding to
+the vendored audit-logging component) implementations, plus
+`build_lockout_policy`/`build_account_service` factories for the new
+`AccountService` (email verification + password reset). `app/api/deps.py`'s
+`get_auth_service` now also wires `lockout=build_lockout_policy(...)`,
+`require_verification=settings.auth_require_email_verification`, and
+`events=AuditAuthEventSink()` into the `AuthService` it builds, and a new
+`get_account_service` dependency (same module) builds an `AccountService`
+via `build_account_service` for the `/auth/verify-email`, `/auth/request-
+password-reset`, `/auth/reset-password` routes (`app/api/routers/auth.py`).
 
 **NOT a vendored file** — it lives alongside `_core.py`/`fastapi.py`/
 `__init__.py` in this directory because that is where this app's auth
@@ -14,22 +28,39 @@ weekly freshness audit does not touch this file.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import smtplib
 import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage as MimeEmailMessage
 from functools import lru_cache
 
+import anyio.to_thread
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.security.audit_logging.audit import audit_event
 from app.core.security.auth import (
+    AccountService,
+    AttemptRecord,
+    ConsoleEmailSender,
+    EmailMessage,
+    EmailSender,
+    LockoutPolicy,
     PasswordService,
     RefreshRecord,
+    SingleUseTokenRecord,
+    SingleUseTokenService,
     TokenService,
     UserRecord,
 )
+from app.models.login_attempt import LoginAttempt
 from app.models.refresh_token import RefreshToken
+from app.models.single_use_token import SingleUseToken
 from app.models.user import User
 
 
@@ -38,7 +69,13 @@ def _user_to_record(user: User) -> UserRecord:
     core's `UserRecord.roles` is a `tuple[str, ...]` — converted here at
     the store boundary, not inside the model, so `User.roles` stays a
     plain JSON-native `list` (what the `JSON` column type round-trips)."""
-    return UserRecord(id=str(user.id), email=user.email, password_hash=user.password_hash, roles=tuple(user.roles))
+    return UserRecord(
+        id=str(user.id),
+        email=user.email,
+        password_hash=user.password_hash,
+        roles=tuple(user.roles),
+        email_verified=user.email_verified,
+    )
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -75,6 +112,27 @@ def _refresh_to_record(row: RefreshToken) -> RefreshRecord:
         expires_at=_as_utc(row.expires_at),
         used_at=_as_utc(row.used_at),
         revoked=row.revoked,
+    )
+
+
+def _single_use_token_to_record(row: SingleUseToken) -> SingleUseTokenRecord:
+    return SingleUseTokenRecord(
+        token_hash=row.token_hash,
+        user_id=str(row.user_id),
+        purpose=row.purpose,
+        expires_at=_as_utc(row.expires_at),
+        used_at=_as_utc(row.used_at),
+        created_at=_as_utc(row.created_at),
+    )
+
+
+def _attempt_to_record(row: LoginAttempt) -> AttemptRecord:
+    return AttemptRecord(
+        account_key=row.account_key,
+        failure_count=row.failure_count,
+        first_failure_at=_as_utc(row.first_failure_at),
+        last_failure_at=_as_utc(row.last_failure_at),
+        locked_until=_as_utc(row.locked_until),
     )
 
 
@@ -147,6 +205,52 @@ class SqlAlchemyUserStore:
         await self._session.refresh(user)
         return _user_to_record(user)
 
+    async def mark_email_verified(self, user_id: str, at: datetime) -> None:
+        """Sets `email_verified=True`/`verified_at=at` for `user_id`. Does
+        NOT commit (matches this class's own docstring/contract above) —
+        `AccountService.verify_email` calls this right after
+        `SingleUseTokenService.consume` (whose `mark_used` write, via
+        `SqlAlchemySingleUseTokenStore`, IS committed immediately, matching
+        that store's own durable-commit contract), so by the time this
+        method's caller returns, the token consumption is already durable
+        even though this particular write rides `get_db()`'s normal
+        end-of-request commit, same as `create()` above."""
+        try:
+            uid = uuid.UUID(user_id)
+        except ValueError:
+            # A caller-supplied id that isn't a UUID cannot match a real
+            # row -- best-effort no-op, matching UserStore's Protocol,
+            # which declares no error path for this method.
+            return
+        result = await self._session.execute(select(User).where(User.id == uid, User.not_deleted()))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return
+        user.email_verified = True
+        user.verified_at = at
+        await self._session.flush()
+
+    async def set_password_hash(self, user_id: str, new_hash: str) -> None:
+        """Overwrites `user_id`'s stored password hash with `new_hash` (an
+        already-Argon2id-hashed value -- see `_core.UserStore.
+        set_password_hash`'s own docstring). Does NOT commit, same posture
+        as `mark_email_verified` above -- `AccountService.reset_password`
+        calls `RefreshTokenStore.revoke_all_for_user` right after this,
+        which DOES commit (matching `SqlAlchemyRefreshTokenStore`'s
+        existing durable-commit contract on the SAME session), making this
+        write durable at that point rather than waiting on `get_db()`'s
+        end-of-request commit."""
+        try:
+            uid = uuid.UUID(user_id)
+        except ValueError:
+            return
+        result = await self._session.execute(select(User).where(User.id == uid, User.not_deleted()))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return
+        user.password_hash = new_hash
+        await self._session.flush()
+
 
 class SqlAlchemyRefreshTokenStore:
     """Implements `_core.RefreshTokenStore` against
@@ -214,6 +318,161 @@ class SqlAlchemyRefreshTokenStore:
         rows = result.scalars().all()
         for row in rows:
             row.revoked = True
+        await self._session.flush()
+        await self._session.commit()
+
+    async def revoke_all_for_user(self, user_id: str) -> None:
+        """Revokes EVERY refresh-token row belonging to `user_id`, across
+        every family (every device/session) — see `_core.
+        RefreshTokenStore.revoke_all_for_user`'s own docstring on why
+        `AccountService.reset_password` calls this rather than
+        `revoke_family` (which only kills the ONE family behind whichever
+        token happened to be presented). Same commit-not-flush durability
+        contract as `add`/`mark_used`/`revoke_family` above."""
+        result = await self._session.execute(select(RefreshToken).where(RefreshToken.user_id == uuid.UUID(user_id)))
+        rows = result.scalars().all()
+        for row in rows:
+            row.revoked = True
+        await self._session.flush()
+        await self._session.commit()
+
+
+class SqlAlchemySingleUseTokenStore:
+    """Implements `_core.SingleUseTokenStore` against
+    `app/models/single_use_token.py`'s `SingleUseToken` and this request's
+    `AsyncSession`.
+
+    **`add`/`mark_used` each explicitly `commit()`** — the SAME
+    durable-commit contract `SqlAlchemyRefreshTokenStore` above documents,
+    and for the identical reason: `_core.SingleUseTokenService.consume`
+    relies on `mark_used` having taken effect before it returns, so a
+    concurrent second presentation of the just-consumed token (someone
+    clicking an already-used verify/reset link twice, or an attacker who
+    intercepted the link racing the legitimate recipient) sees the updated
+    `used_at` and is correctly rejected as reuse rather than racing past
+    this implementation's own write."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, record: SingleUseTokenRecord) -> None:
+        row = SingleUseToken(
+            token_hash=record.token_hash,
+            user_id=uuid.UUID(record.user_id),
+            purpose=record.purpose,
+            expires_at=record.expires_at,
+            used_at=record.used_at,
+            created_at=record.created_at,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        await self._session.commit()
+
+    async def get_by_hash(self, token_hash: str) -> SingleUseTokenRecord | None:
+        result = await self._session.execute(select(SingleUseToken).where(SingleUseToken.token_hash == token_hash))
+        row = result.scalar_one_or_none()
+        return _single_use_token_to_record(row) if row is not None else None
+
+    async def mark_used(self, token_hash: str, used_at: datetime) -> None:
+        result = await self._session.execute(select(SingleUseToken).where(SingleUseToken.token_hash == token_hash))
+        row = result.scalar_one_or_none()
+        if row is None:
+            # SingleUseTokenService.consume only calls mark_used() on a row
+            # it just looked up successfully -- a None here would mean it
+            # vanished mid-request. Best-effort no-op, matching
+            # SingleUseTokenStore's Protocol, which declares no error path.
+            return
+        row.used_at = used_at
+        await self._session.flush()
+        await self._session.commit()
+
+
+class SqlAlchemyLockoutStore:
+    """Implements `_core.LockoutStore` against
+    `app/models/login_attempt.py`'s `LoginAttempt` and this request's
+    `AsyncSession` — dumb persistence only; ALL of the counting/threshold/
+    rolling-window logic lives in `_core.LockoutPolicy`, not here (see that
+    class's own docstring).
+
+    **`upsert`/`clear` each explicitly `commit()`** — lockout state MUST
+    survive a process restart (a fresh connection/session, a new request
+    hitting a different worker process) to actually do its job: an
+    in-memory-only or flush-only lockout would silently reset on restart,
+    letting a locked-out account's guessing resume immediately. This is
+    THE property the real-PG16 integration script (see README's Alembic
+    section) proves directly: write an `AttemptRecord` via this store, open
+    a brand-new engine/session, read it back and see the lock still there.
+
+    `upsert` reads then inserts-or-updates the ONE row per `account_key`
+    (`login_attempts.account_key` is DB-level UNIQUE, per Alembic 0003) —
+    matching `_core.LockoutPolicy`'s own documented, ACCEPTED non-atomic
+    read-modify-write relaxation (see that class's docstring: a lockout
+    race can only ever delay when a lock becomes visible by a small,
+    bounded amount, never let a wrong password succeed). A genuine
+    concurrent insert race for the SAME `account_key` (two simultaneous
+    wrong-password requests, both seeing no existing row) is still caught
+    at the DB level by that UNIQUE index — `upsert` falls back to updating
+    whichever row won the race rather than letting the loser's request
+    surface a raw `IntegrityError` as a 500."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, account_key: str) -> AttemptRecord | None:
+        result = await self._session.execute(select(LoginAttempt).where(LoginAttempt.account_key == account_key))
+        row = result.scalar_one_or_none()
+        return _attempt_to_record(row) if row is not None else None
+
+    async def upsert(self, record: AttemptRecord) -> None:
+        result = await self._session.execute(
+            select(LoginAttempt).where(LoginAttempt.account_key == record.account_key)
+        )
+        row = result.scalar_one_or_none()
+        if row is not None:
+            row.failure_count = record.failure_count
+            row.first_failure_at = record.first_failure_at
+            row.last_failure_at = record.last_failure_at
+            row.locked_until = record.locked_until
+            await self._session.flush()
+            await self._session.commit()
+            return
+
+        new_row = LoginAttempt(
+            account_key=record.account_key,
+            failure_count=record.failure_count,
+            first_failure_at=record.first_failure_at,
+            last_failure_at=record.last_failure_at,
+            locked_until=record.locked_until,
+        )
+        self._session.add(new_row)
+        try:
+            await self._session.flush()
+        except IntegrityError:
+            # A concurrent request raced this one and already inserted the
+            # row for this account_key -- see this class's own docstring.
+            # Discard our own pending insert and fall back to updating
+            # whichever row won.
+            await self._session.rollback()
+            result = await self._session.execute(
+                select(LoginAttempt).where(LoginAttempt.account_key == record.account_key)
+            )
+            existing = result.scalar_one_or_none()
+            if existing is not None:
+                existing.failure_count = record.failure_count
+                existing.first_failure_at = record.first_failure_at
+                existing.last_failure_at = record.last_failure_at
+                existing.locked_until = record.locked_until
+                await self._session.flush()
+        await self._session.commit()
+
+    async def clear(self, account_key: str) -> None:
+        result = await self._session.execute(select(LoginAttempt).where(LoginAttempt.account_key == account_key))
+        row = result.scalar_one_or_none()
+        if row is None:
+            # Nothing to clear -- matches mark_used()'s/revoke_family()'s
+            # own "best-effort, no error path" posture for a missing row.
+            return
+        await self._session.delete(row)
         await self._session.flush()
         await self._session.commit()
 
@@ -286,4 +545,262 @@ def get_token_service(settings: Settings) -> TokenService:
         access_ttl=timedelta(seconds=settings.jwt_access_ttl_seconds),
         refresh_ttl=timedelta(seconds=settings.jwt_refresh_ttl_seconds),
         now=utc_now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Email seam: ConsoleEmailSender (dev/test, vendored) vs. a real SmtpEmailSender
+# ---------------------------------------------------------------------------
+
+
+_smtp_logger = logging.getLogger("auth.email.smtp")
+
+
+class SmtpEmailSender:
+    """Production `_core.EmailSender` implementation — hand-rolled, stdlib
+    `smtplib` + `email.message.EmailMessage` only (no third-party email
+    library/pin), matching this app's "don't add a dependency for what the
+    standard library already does" posture elsewhere in this catalog.
+
+    **Fire-and-forget by contract** (adversarial-review fix, FIX 3): `send()`
+    SCHEDULES delivery (`asyncio.create_task(self._deliver(message))`) and
+    returns immediately — it does NOT await the SMTP round-trip, and it
+    NEVER raises. This is what `_core.EmailSender`'s own Protocol docstring
+    requires ("implementations MUST NOT let delivery latency or delivery
+    failure affect the caller") and what `_core.AccountService.
+    request_password_reset`'s anti-enumeration defense and `register`'s
+    M2 resilience fix (`app/api/routers/auth.py`) both depend on: neither
+    caller can tell, from `send()` returning, whether the message was
+    actually delivered — only that delivery was scheduled. `_deliver` runs
+    the actual blocking `smtplib` work on a worker thread (`anyio.to_thread.
+    run_sync` — see that method's own docstring for why) inside a
+    `try/except Exception` that logs a `warning` and swallows the error;
+    nothing ever propagates back out of the background task, because
+    nothing is awaiting it that could observe a raise or a return.
+
+    **In-flight task lifetime.** A bare `asyncio.create_task(...)` result
+    that nothing holds a reference to is eligible for garbage collection
+    mid-flight (the task can be silently cancelled before it completes —
+    see `asyncio.create_task`'s own docs on this exact footgun). `_tasks`
+    (a `set`) holds a strong reference to every task this instance has
+    scheduled for as long as it's in flight — added in `send()`, removed
+    by a `add_done_callback` once the task finishes (success OR the
+    already-caught-internally failure) — so a `send()` call's task is
+    guaranteed to actually run to completion rather than vanishing.
+
+    **Best-effort on shutdown.** This class holds no reference to the
+    app's own lifespan/shutdown sequence, so a task still in flight when
+    the process exits (a slow SMTP handshake racing a deploy) can be cut
+    off mid-delivery — that email is then simply not delivered, silently,
+    same as any other fire-and-forget background job. This is an accepted
+    trade-off for a starter-kit reference sender: a project with a hard
+    delivery guarantee should replace this with a real queue/outbox
+    (persisted, retried, survives a restart) rather than an in-process
+    `asyncio.Task`; `_core.EmailSender`'s Protocol is the seam that swap
+    happens behind, unchanged for either `AccountService` caller.
+
+    Always issues `STARTTLS` before authenticating — this app never sends
+    a plaintext SMTP AUTH exchange (which would leak `smtp_username`/
+    `smtp_password` to a network observer) over an unencrypted connection.
+    `username`/`password` are optional (`None`/`None` skips the `AUTH`
+    step entirely) for a relay that doesn't require authentication (e.g. an
+    internal MTA on a trusted network)."""
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        username: str | None,
+        password: str | None,
+        from_addr: str,
+    ) -> None:
+        self._host = host
+        self._port = port
+        self._username = username
+        self._password = password
+        self._from_addr = from_addr
+        # Strong references to in-flight delivery tasks -- see this class's
+        # own docstring on why a bare create_task() result can't be left to
+        # get garbage-collected mid-flight.
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    async def send(self, message: EmailMessage) -> None:
+        """Schedules delivery and returns immediately -- does NOT await the
+        SMTP round-trip, does NOT raise. See this class's own docstring."""
+        task = asyncio.create_task(self._deliver(message))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _deliver(self, message: EmailMessage) -> None:
+        """Runs as a background task (scheduled by `send()` above), never
+        awaited by a caller. Bridges the blocking `smtplib` work onto a
+        worker thread via `anyio.to_thread.run_sync` — `anyio` is already a
+        transitive dependency of FastAPI/Starlette (no new pin in
+        `pyproject.toml` is needed), and is the framework-agnostic
+        thread-offload primitive Starlette itself uses internally, so
+        reaching for it here matches how this app's own ASGI stack already
+        handles blocking work. Any exception (a connection failure, an
+        auth rejection, a timeout) is caught here and only LOGGED — this is
+        the actual enforcement point of this class's fire-and-forget
+        contract: nothing above this method ever sees the exception,
+        because nothing above it is awaiting this coroutine at all."""
+        try:
+            await anyio.to_thread.run_sync(self._send_sync, message)
+        except Exception:
+            _smtp_logger.warning("Failed to deliver email to %s (subject=%r)", message.to, message.subject, exc_info=True)
+
+    def _send_sync(self, message: EmailMessage) -> None:
+        """Runs on a worker thread (via `anyio.to_thread.run_sync` in
+        `_deliver` above) — every call here is BLOCKING stdlib I/O, never
+        `await`ed directly."""
+        mime = MimeEmailMessage()
+        mime["From"] = self._from_addr
+        mime["To"] = message.to
+        mime["Subject"] = message.subject
+        mime.set_content(message.body)
+        with smtplib.SMTP(self._host, self._port, timeout=10) as client:
+            client.starttls()
+            if self._username and self._password:
+                client.login(self._username, self._password)
+            client.send_message(mime)
+
+
+def get_email_sender(settings: Settings) -> EmailSender:
+    """Returns a `ConsoleEmailSender` (vendored, dev/test-only — logs the
+    message, including the raw single-use token, instead of delivering it —
+    see that class's own docstring) when `settings.smtp_host` is unset,
+    else a real `SmtpEmailSender` built from `settings.smtp_*`/`email_from`.
+    Same "don't invent a secret, fail closed to the SAFE dev-only fallback
+    rather than a fake/broken production path" posture as
+    `get_token_service`'s `AuthNotConfiguredError` guard above, applied to
+    email instead of JWT signing: an unset `SMTP_HOST` never raises here —
+    it just means this process never intended to send real email (matching
+    most of this app's tests/local dev), so `ConsoleEmailSender` is the
+    correct, safe default rather than a hard failure."""
+    if not settings.smtp_host:
+        return ConsoleEmailSender()
+    return SmtpEmailSender(
+        host=settings.smtp_host,
+        port=settings.smtp_port,
+        username=settings.smtp_username,
+        password=settings.smtp_password,
+        from_addr=settings.email_from,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit seam: AuditAuthEventSink forwards to the vendored audit-logging
+# component's audit_event()
+# ---------------------------------------------------------------------------
+
+
+class AuditAuthEventSink:
+    """Implements `_core.AuthEventSink` by forwarding every call to the
+    vendored audit-logging component's `audit_event(...)`
+    (`app/core/security/audit_logging/audit.py`) — this is the "thin
+    adapter" `_core.AuthEventSink`'s own docstring describes a project
+    wiring, kept as app code (not part of `_core.py`) so that module stays
+    at "stdlib + PyJWT + argon2-cffi only, zero framework/app import".
+
+    `action`/`actor`/`outcome` pass straight through — `_core.py` already
+    constructs `actor` as a bare opaque id string (a user id, `"anonymous"`,
+    or `"unknown"`/`"user:unknown"` for a path with no trustworthy
+    principal — see e.g. `AccountService.request_password_reset`'s own
+    docstring on why THAT method never uses the submitted email as the
+    actor) — this sink never receives, and therefore can never leak, a raw
+    token, password, or email address as a field: every `**extra` this
+    module's callers pass is limited to what `_core.py`'s own docstrings
+    document (which is nothing beyond `action`/`actor`/`outcome` today).
+    `audit_event`'s own `redact()` step is a second, independent line of
+    defense on top of that — see its own docstring — not the only one.
+
+    `resource` is a fixed `"auth"` string, not per-event — every event this
+    sink ever receives IS an auth-subsystem event acting on the actor's own
+    account; there is no separate, more specific resource identifier to
+    name here that wouldn't just duplicate `actor`."""
+
+    async def emit(self, action: str, *, actor: str, outcome: str, **extra: object) -> None:
+        audit_event(action, actor=actor, resource="auth", outcome=outcome, **extra)
+
+
+# ---------------------------------------------------------------------------
+# AccountService factories (Stage 5c, #45) — NEW, alongside app/api/deps.py's
+# existing get_auth_service. Not yet called from anywhere in this stage.
+# ---------------------------------------------------------------------------
+
+
+def build_lockout_policy(settings: Settings, session: AsyncSession) -> LockoutPolicy | None:
+    """Returns a `LockoutPolicy` backed by `SqlAlchemyLockoutStore(session)`
+    when `settings.auth_lockout_enabled` is `True`, `None` when it isn't —
+    both `AuthService` and `AccountService` treat a `None` lockout as "not
+    wired, skip lockout entirely" (see each class's own `lockout` parameter
+    docstring), so this single function is the one place that decision is
+    made, callable identically for either service's wiring.
+
+    A project wiring `AuthService.login`'s own `lockout=` parameter (the
+    next stage's endpoint work) should call this SAME function, passing the
+    SAME `session`, as `AccountService`'s wiring below does — sharing one
+    `LockoutPolicy` instance (or at least one built against the same
+    underlying `SqlAlchemyLockoutStore`/session/settings) is what lets a
+    successful `AccountService.reset_password` lift a lockout `AuthService.
+    login` had recorded against the same account (see `_core.
+    AccountService.__init__`'s own docstring on its `lockout` parameter)."""
+    if not settings.auth_lockout_enabled:
+        return None
+    return LockoutPolicy(
+        SqlAlchemyLockoutStore(session),
+        max_failures=settings.auth_lockout_max_failures,
+        lockout_duration=timedelta(seconds=settings.auth_lockout_duration_seconds),
+        window=timedelta(seconds=settings.auth_lockout_window_seconds),
+        now=utc_now,
+    )
+
+
+def build_account_service(
+    settings: Settings,
+    session: AsyncSession,
+    *,
+    email: EmailSender | None = None,
+) -> AccountService:
+    """Builds a per-request `AccountService`, the SAME composition shape
+    `app/api/deps.py:get_auth_service` uses for `AuthService` — a fresh
+    `SqlAlchemyUserStore`/`SqlAlchemyRefreshTokenStore`/
+    `SqlAlchemySingleUseTokenStore` bound to THIS request's `session`, the
+    process-wide `PasswordService` singleton, `utc_now` as the single
+    shared clock, `AuditAuthEventSink()` for `events`, `build_lockout_
+    policy(settings, session)` for `lockout` (shared-session, so a
+    completed reset can lift a lockout `AuthService.login` recorded — see
+    that function's own docstring), and `settings.frontend_base_url`/
+    `auth_verify_ttl_seconds`/`auth_reset_ttl_seconds` for the link-building
+    and TTL configuration.
+
+    `email` (Stage 5c #45 endpoint work, keyword-only): the `EmailSender`
+    to use — `None` (the default) resolves it the same way this function
+    always has (`get_email_sender(settings)`). A caller that already has
+    one resolved from elsewhere passes it directly instead — this is the
+    seam `app/api/deps.py:get_account_service` uses to hand this function
+    the SAME `EmailSender` a FastAPI dependency (overridable via
+    `app.dependency_overrides` in tests, see `tests/test_auth.py`'s
+    `capturing_email_sender` fixture) resolved, rather than this function
+    re-resolving its own independent instance that a test override would
+    never reach.
+
+    Intentionally analogous to `app/api/deps.py:get_auth_service` — this
+    factory is called from `get_account_service`, the FastAPI dependency
+    the `/auth/verify-email`, `/auth/request-password-reset`, `/auth/
+    reset-password` routes (and `register`'s post-registration
+    verification-email side effect) depend on."""
+    return AccountService(
+        users=SqlAlchemyUserStore(session),
+        tokens=SingleUseTokenService(SqlAlchemySingleUseTokenStore(session), now=utc_now),
+        email=email if email is not None else get_email_sender(settings),
+        passwords=get_password_service(),
+        refresh_tokens=SqlAlchemyRefreshTokenStore(session),
+        now=utc_now,
+        events=AuditAuthEventSink(),
+        lockout=build_lockout_policy(settings, session),
+        frontend_base_url=settings.frontend_base_url,
+        verify_ttl=timedelta(seconds=settings.auth_verify_ttl_seconds),
+        reset_ttl=timedelta(seconds=settings.auth_reset_ttl_seconds),
     )
