@@ -15,15 +15,17 @@ import { RequireRole } from "@repo/web-shared";
  * `app/(app)/admin/page.tsx`).
  */
 export const AdminGate = ({ children }: { children: ReactNode }): ReactNode => (
-  <RequireRole role="admin" fallback={<RedirectHome />}>
+  <RequireRole role="admin" fallback={<RedirectToDashboard />}>
     {children}
   </RequireRole>
 );
 
-const RedirectHome = (): ReactNode => {
+// A signed-in non-admin belongs back in the app, not on the public landing
+// page — send them to their dashboard (`/` is the SSR marketing page here).
+const RedirectToDashboard = (): ReactNode => {
   const router = useRouter();
   useEffect(() => {
-    router.replace("/");
+    router.replace("/dashboard");
   }, [router]);
   return null;
 };

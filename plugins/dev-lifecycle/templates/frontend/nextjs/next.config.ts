@@ -48,6 +48,14 @@ const nextConfig: NextConfig = {
   },
 
   async rewrites() {
+    // This same-origin proxy is a DEV-ONLY convenience. In production the app
+    // is edge-routed (or uses credentialed CORS) — see docs/fragment.md's
+    // Deployment section — so we hard-gate the rewrite off under a production
+    // build: a stray relative `/auth/*` call on the prod Next server must NOT
+    // silently proxy to `localhost:8000`. Belt-and-suspenders (the destination
+    // host is a compile-time constant, never user-controlled), but it keeps the
+    // dev shortcut from ever running where it shouldn't.
+    if (process.env.NODE_ENV === "production") return [];
     // Two rules per path: the bare path itself (`/auth`) and everything under
     // it (`/auth/:rest*`) — Next's rewrite matcher needs an explicit `:rest*`
     // segment to catch sub-paths, unlike the Vite proxy's plain string-prefix
