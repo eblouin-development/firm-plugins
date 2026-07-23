@@ -42,7 +42,7 @@ None of the following exist in this kit as of this recipe's `last-verified` date
 - **No device-token model, migration, or registration endpoint** in either `templates/backend/fastapi` or `templates/backend/django` — no `DeviceToken`/`PushToken` table, no `/devices`/`/push/register` route.
 - **No Expo push-sending code** — no `expo-server-sdk` (Python) dependency, no call to `https://exp.host/--/api/v2/push/send` anywhere in either backend block.
 - **No compatibility-matrix row** for `expo-notifications` or `expo-server-sdk` — pin both against their current PyPI/npm releases at implementation time (per the SDK-57-governed convention `native-modules.md` already documents for `expo-notifications`; `expo-server-sdk` has no SDK-version coupling, since it's a plain server-side HTTP client).
-- **No `references/wiring/mobile-backend.md`-style dedicated wiring reference for push** exists in this branch's base — if the kit later adds one, prefer it as the canonical mobile-backend contract and treat this recipe's mobile/backend split below as subordinate to it.
+- **No push-specific transport exists yet**, though `references/wiring/mobile-backend.md` is the canonical Expo↔backend wiring contract (SecureStore/bearer auth, deep links) and flags push as a forward-looking tie to this recipe — treat that ref as the authoritative mobile/backend contract and this recipe's mobile/backend split below as subordinate to it.
 
 Don't cite any of the above as already wired. A build agent applying this recipe is doing net-new work on both the mobile app and the backend, not composing a pre-built push component.
 
