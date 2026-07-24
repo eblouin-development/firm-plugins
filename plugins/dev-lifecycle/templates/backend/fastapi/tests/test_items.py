@@ -62,6 +62,47 @@ def test_update_item(client: TestClient) -> None:
     assert body["description"] == created["description"]  # unset field untouched
 
 
+def test_update_item_omitting_name_is_a_valid_partial_update(client: TestClient) -> None:
+    """`{}` (nothing set) and a body that only sets `description` must both
+    still be valid no-op-on-`name` partial updates — the fix for #41 must
+    not regress the "omit a field" contract."""
+    created = _create_item(client)
+
+    empty_response = client.patch(f"/items/{created['id']}", json={})
+    assert empty_response.status_code == 200
+    assert empty_response.json()["name"] == created["name"]
+
+    description_only = client.patch(f"/items/{created['id']}", json={"description": "Updated."})
+    assert description_only.status_code == 200
+    body = description_only.json()
+    assert body["name"] == created["name"]
+    assert body["description"] == "Updated."
+
+
+def test_update_item_with_explicit_null_name_returns_enveloped_422(client: TestClient) -> None:
+    """Regression test for #41: `PATCH /items/{id}` with `{"name": null}`
+    previously 500'd (the DB column is NOT NULL but `ItemUpdate.name` was
+    `str | None`, so an explicit `null` sailed through validation and
+    crashed the INSERT/UPDATE). It must now be rejected at the schema
+    boundary as a 422 `validation_failed` envelope, matching the Django
+    track's behavior for the same request."""
+    created = _create_item(client)
+    response = client.patch(f"/items/{created['id']}", json={"name": None})
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "validation_failed"
+    assert body["error"]["message"]
+    assert isinstance(body["error"]["details"], list)
+    assert len(body["error"]["details"]) >= 1
+    assert body["error"]["details"][0]["field"].endswith("name")
+
+    # The row itself must be untouched — no partial mutation before the
+    # rejection.
+    fetched = client.get(f"/items/{created['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["name"] == created["name"]
+
+
 def test_delete_item_then_get_is_404(client: TestClient) -> None:
     created = _create_item(client)
     delete_response = client.delete(f"/items/{created['id']}")
