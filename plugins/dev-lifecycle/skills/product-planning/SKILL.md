@@ -44,6 +44,8 @@ Share the epic link and the roadmap at a glance. With the repo scaffolded and th
 
 So the full greenfield order is: `technical-proposal` (decide) → `scaffolding` (create & init the repo) → `product-planning` (file the epic/roadmap into it) → `planning` per stage.
 
+**Where you sit in the chain:** discovery → technical-proposal → web-proposal-writer → product-planning → planning.
+
 ## What this skill does NOT do
 - Write implementation code, scaffolding, or configuration.
 - Tag `@claude` or trigger any build — stages are advanced deliberately via `planning`.

@@ -1,8 +1,9 @@
 <!--
 recipe: background-jobs
 applies-to:
-  - backend block: django (Celery + Redis broker — references/backend/celery.md's own reference stack) OR fastapi (BackgroundTasks for light fire-and-forget work; a real task queue is a project addition — see "What the kit does not provide")
-last-verified: 2026-07-23
+  - worker block: worker/celery (templates/worker/celery/) — composes alongside either backend track
+  - backend block: django (Celery + Redis broker — references/backend/celery.md's own reference stack) OR fastapi (worker/celery for anything beyond light fire-and-forget work; BackgroundTasks stays the right tool for in-process, best-effort work)
+last-verified: 2026-07-24
 provenance: manual
 sources:
   - https://docs.celeryq.dev/en/stable/userguide/tasks.html
@@ -11,46 +12,127 @@ sources:
   - references/backend/celery.md
   - references/backend/fastapi.md
   - references/backend/redis.md
+  - templates/worker/celery/README.md
 -->
 
 # Background jobs
 
-Wire asynchronous task/worker execution so a request never blocks on slow, retryable, or scheduled work: Celery + Redis on the Django track (the kit's real, documented task-queue stack), and FastAPI's native `BackgroundTasks` for light fire-and-forget work on that track — with an explicit, honest note on what a heavier FastAPI workload needs that the kit does not yet ship. Everything here is **subordinate to the project's existing conventions** — when they conflict, the project wins.
+Wire asynchronous task/worker execution so a request never blocks on
+slow, retryable, or scheduled work: the `worker/celery` block
+(`templates/worker/celery/`) for real, durable, retryable work on EITHER
+backend track, and FastAPI's native `BackgroundTasks` for light
+fire-and-forget work that can afford to be lost. Everything here is
+**subordinate to the project's existing conventions** — when they
+conflict, the project wins.
 
 ## Contents
 - What this wires
 - Prerequisites
-- Wire-up steps (Django + Celery)
-- Wire-up steps (FastAPI + BackgroundTasks)
-- What the kit does not provide (be honest about the FastAPI gap)
+- Wire-up steps (worker/celery, either backend)
+- Wire-up steps (FastAPI + BackgroundTasks, for light work only)
+- Choosing between BackgroundTasks and worker/celery
 - Idempotent tasks, retries, and not blocking the request
 - Doc fragment
 
 ## What this wires
-Applying this recipe gives a feature working background execution appropriate to its backend track: on Django, a `@shared_task` running on a Celery worker against the same Redis instance already available to the project (see `references/backend/redis.md`), callable with `.delay()`/`.apply_async()` and, where needed, scheduled via `django-celery-beat`. On FastAPI, `BackgroundTasks` for light, non-critical, in-process work that must not block the response.
 
-It **composes existing pieces**:
-- **`references/backend/celery.md`** — the kit's real, current Celery convention doc (Celery 5.6.x + django-celery-beat 2.9.0): app setup/autodiscovery, `@shared_task` vs `@app.task`, `.delay()`/`.apply_async()`, `acks_late`/idempotency, declarative retries with backoff, routing/queues, periodic tasks, worker concurrency, and serialization security. This recipe wires a project's own tasks to it; it does not restate its content.
-- **`references/backend/redis.md`** — the broker (and optional result backend) Celery runs against; also the pattern for a project's own Redis client if a task needs one directly (cache-aside, locks, pub/sub) beyond the Celery broker connection itself.
-- **`references/backend/fastapi.md`**'s "Background work" section — the FastAPI track's own guidance: `BackgroundTasks` for light work, "the project's task queue (Celery/arq/taskiq)" for heavier work, without picking one for FastAPI. This recipe follows that same split rather than inventing a FastAPI task-queue convention the kit doesn't have.
-- **The `idempotency` catalog component** (`templates/components/security/idempotency/`) — not itself a task-queue mechanism, but the same idempotency discipline (a stable operation key, safe replay) that makes a task safe to retry; see "Idempotent tasks" below for how the same principle applies inside a task body, not just at the HTTP boundary.
+Applying this recipe scaffolds `templates/worker/celery/` into a
+project's `apps/worker/` — a Celery app, task-module conventions
+(idempotent + retry/backoff + structured logging, `templates/worker/
+celery/app/tasks/base.py`'s `idempotent_task()`), a beat scheduler, and an
+enqueue seam (`app/registry.py`'s `TaskName`/`enqueue()`) either backend
+copies in to dispatch work — then wires that seam into the feature that
+needs async execution. It **composes existing pieces**:
+
+- **`templates/worker/celery/README.md`** — the block's own composition
+  contract, app layout, and conventions; this recipe wires a project's own
+  feature to it, it does not restate the block's content.
+- **`references/backend/celery.md`** — the kit's Celery convention doc
+  (Celery 5.6.x): app setup/autodiscovery, `@shared_task` vs `@app.task`,
+  `.delay()`/`.apply_async()`, `acks_late`/idempotency, declarative
+  retries with backoff, routing/queues, periodic tasks, worker
+  concurrency, and serialization security — the block embodies this doc,
+  this recipe points at it for the underlying rationale.
+- **`references/backend/redis.md`** — the broker (and optional result
+  backend) the worker block runs against; also the pattern for a
+  project's own Redis client if a task needs one directly (cache-aside,
+  locks, pub/sub) beyond the Celery broker connection itself.
+- **`references/backend/fastapi.md`**'s "Background work" section —
+  `BackgroundTasks` for light, in-process, best-effort work; the
+  worker/celery block for anything heavier. This recipe follows that same
+  split rather than picking BackgroundTasks for everything.
+- **The `idempotency` catalog component** (`templates/components/
+  security/idempotency/`) — not itself a task-queue mechanism, but the
+  same idempotency discipline (a stable operation key, safe replay) that
+  makes a task safe to retry; see "Idempotent tasks" below for how the
+  same principle applies inside a task body, not just at the HTTP
+  boundary.
 
 ## Prerequisites
-- **Django track:** a backend block (`templates/backend/django`) with `celery`/`django-celery-beat` added to the project's dependencies (no compatibility-matrix row exists for Celery yet — `references/backend/celery.md`'s own "Version check" section is the version source: Celery 5.6.x, django-celery-beat 2.9.0 as of this recipe's `last-verified`; re-verify against PyPI before pinning at implementation time) and a Redis instance reachable at `CELERY_BROKER_URL`.
-- **FastAPI track:** no new dependency — `BackgroundTasks` ships with FastAPI itself. A heavier task queue (arq, Dramatiq, or Celery adapted to run under `asyncio`) is a **project addition**, not something this kit vendors — see "What the kit does not provide."
-- A Redis instance for the Django track's broker (and, optionally, a separate DB index as the result backend) — per `references/backend/redis.md`'s "Celery, testing" section: keep the broker DB and any app-level cache DB distinct.
+- **Either backend track:** the `worker/celery` block scaffolded into
+  `apps/worker/`, alongside whichever backend block (`backend/fastapi` or
+  `backend/django`) is already in `apps/api/` — they share `DATABASE_URL`.
+  A reachable Redis instance for `CELERY_BROKER_URL` (the worker block's
+  own `docker-compose.yml` for standalone dev, or the monorepo root
+  compose's shared `redis` service once wired in — see
+  `templates/monorepo/docker-compose.yml`).
+- **The enqueue seam copied into the backend:** `templates/worker/celery/
+  app/registry.py` copied into the backend block's own `app/core/tasks/
+  registry.py` (or equivalent) — see the worker block README's "The
+  enqueue seam" section. This is the ONLY worker-block file a backend
+  needs; it never imports the worker's task code.
+- **FastAPI track, light work only:** no new dependency —
+  `BackgroundTasks` ships with FastAPI itself.
 
-## Wire-up steps (Django + Celery)
-1. **Wire the Celery app per `references/backend/celery.md`'s "App setup & autodiscovery."** `proj/celery.py` builds the `Celery('proj')` instance, calls `app.config_from_object('django.conf:settings', namespace='CELERY')`, and `app.autodiscover_tasks()`; import it in `proj/__init__.py` so `@shared_task` binds at startup. Config keys are lowercase (`CELERY_BROKER_URL` in settings maps to `broker_url`) — don't emit the legacy uppercase form.
-2. **Set `CELERY_BROKER_URL` (and, only if a task's return value is actually consumed, `CELERY_RESULT_BACKEND`) as environment config**, resolved the same way every other runtime setting in the block is (the block's own settings module) — never hardcoded in `celery.py`. Point both at the project's Redis instance, on separate DB numbers if both are used (`redis://redis:6379/0` broker, `/1` result backend), per `celery.md`'s "Broker vs result backend."
-3. **Define each task with `@shared_task`, not `@app.task`** — per `celery.md`'s "Defining tasks," `@shared_task` doesn't bind to a specific app instance, so a reusable `tasks.py` works without importing the Celery app (avoids circular imports). Pass **IDs, not ORM objects** as task arguments (`celery.md`'s "Pitfalls & testing") — an ORM object serializes stale and bloats the message; re-fetch inside the task.
-4. **Call tasks with `.delay()` or `.apply_async()`** from the view/serializer that triggers the work — never call the task function directly (that runs it in-process, synchronously, defeating the entire point). Use `.apply_async(..., queue=..., countdown=..., eta=...)` when a specific queue, delay, or scheduling is needed.
-5. **Isolate slow/IO-heavy tasks onto their own queue** (`celery.md`'s "Routing & queues": `task_routes = {'app.tasks.slow_thing': {'queue': 'io'}}`) with a dedicated worker (`celery -A proj worker -Q io`) so a burst of slow tasks can't starve fast ones on the default queue.
-6. **For scheduled/periodic work, use `django-celery-beat`'s DB-backed scheduler**, not a hardcoded cron-like schedule — add `django_celery_beat` to `INSTALLED_APPS`, migrate, and run **exactly one** `beat` process (`celery -A proj beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler`) separate from the worker process(es). Two `beat` processes double-fire every scheduled task — this is an operational invariant to enforce at the deploy-configuration layer (one replica, not autoscaled), not something Celery itself guards against.
-7. **Keep `task_serializer`/`accept_content` at `json`** (the default) — per `celery.md`'s "Serialization & security," never accept `pickle` from an untrusted broker; it executes arbitrary code on deserialize.
+## Wire-up steps (worker/celery, either backend)
+1. **Scaffold the block** into `apps/worker/` (copy `templates/worker/
+   celery/` verbatim, matching how `backend/fastapi`/`backend/django`
+   themselves get scaffolded into `apps/api/`). Set `CELERY_BROKER_URL`
+   (required) and, only if a task's return value is consumed,
+   `CELERY_RESULT_BACKEND` — both point at the project's Redis instance,
+   resolved the same way every other runtime setting is (`WorkerSettings`
+   in `app/core/settings.py`).
+2. **Write the task** in `apps/worker/app/tasks/<module>.py`, decorated
+   with `idempotent_task(name="app.tasks.<module>.<task>")` (`tasks/
+   base.py`) — an upsert-shaped body (safe to run twice under
+   `acks_late=True`), **IDs, not ORM objects**, as arguments
+   (`celery.md`'s "Pitfalls & testing"). See `tasks/example.py` for a
+   worked default-queue and IO-queue example.
+3. **Copy `app/registry.py` into the backend block**, add the new task's
+   name to `TaskName`, and call it from the route/view that triggers the
+   work:
+   ```python
+   from app.core.tasks.registry import TaskName, enqueue
 
-## Wire-up steps (FastAPI + BackgroundTasks)
-1. **Reach for `BackgroundTasks` only for light, fire-and-forget work tied to one request** — per `references/backend/fastapi.md`'s "Background work" section: e.g. sending a notification email after a response, writing a non-critical audit-adjacent log line. Add the parameter to the route handler and schedule the callable; it runs after the response is sent, in the same process.
+   @router.post("/widgets")
+   async def create_widget(payload: WidgetCreate, db: AsyncSession = Depends(get_db)) -> WidgetOut:
+       widget = await repo.create(**payload.model_dump())
+       enqueue(TaskName.NOTIFY_WIDGET_CREATED, str(widget.id))
+       return WidgetOut.model_validate(widget)
+   ```
+   Never call the task function directly and never import the worker
+   block's task code from the backend process — `enqueue()`/`send_task`
+   is the only path, matching `apps/api` and `apps/worker` being two
+   separate deployables.
+4. **Isolate slow/IO-heavy tasks by naming them `io_<something>`**
+   (`celery_app.py`'s `_route_task` routes them onto the dedicated IO
+   queue automatically) so a burst of slow tasks can't starve fast ones
+   on the default queue — see `celery.md`'s "Routing & queues" for the
+   underlying convention.
+5. **For scheduled/periodic work**, add an entry to `celery_app.py`'s
+   `beat_schedule` dict (the default file-based `PersistentScheduler`,
+   works with either backend, no extra dependency) — or, on the Django
+   track, opt into `django-celery-beat`'s DB-backed `DatabaseScheduler`
+   for admin-editable schedules (worker block README's "Beat scheduler"
+   section). Run **exactly one** `beat` process — two double-fire every
+   scheduled task.
+
+## Wire-up steps (FastAPI + BackgroundTasks, for light work only)
+1. **Reach for `BackgroundTasks` only for light, fire-and-forget work
+   tied to one request** — per `references/backend/fastapi.md`'s
+   "Background work" section: e.g. writing a non-critical audit-adjacent
+   log line. Add the parameter to the route handler and schedule the
+   callable; it runs after the response is sent, in the same process.
    ```python
    from fastapi import BackgroundTasks
 
@@ -60,41 +142,74 @@ It **composes existing pieces**:
        background_tasks.add_task(notify_widget_created, widget.id)
        return WidgetOut.model_validate(widget)
    ```
-2. **Know the limits before reaching for it on anything heavier.** `BackgroundTasks` runs **in-process**, with no retry, no persistence, and no cross-process durability — a worker restart or crash between "response sent" and "task finished" silently drops the work, and there is no dashboard, dead-letter handling, or backoff. It is the right tool for "best-effort, cheap, and it's fine if it's occasionally lost" — never for anything the project cannot afford to silently lose (payment follow-up, an irreversible external side effect).
-3. **The same non-blocking discipline `templates/components/security/auth/`'s `EmailSender` seam already follows applies here**: don't `await` a slow network call synchronously inside the request path just because `BackgroundTasks` exists — the transactional-email recipe's fire-and-forget, non-raising contract is the same shape a `BackgroundTasks` callable should hold (catch and log its own errors; never propagate into a place nothing awaits it).
+2. **Know the limits before reaching for it on anything heavier.**
+   `BackgroundTasks` runs **in-process**, with no retry, no persistence,
+   and no cross-process durability — a worker restart or crash between
+   "response sent" and "task finished" silently drops the work, and there
+   is no dashboard, dead-letter handling, or backoff. Anything the
+   project cannot afford to silently lose (payment follow-up, an
+   irreversible external side effect, anything that must survive a
+   restart) belongs on `worker/celery` instead — see "Choosing between"
+   below.
+3. **The same non-blocking discipline `templates/components/security/
+   auth/`'s `EmailSender` seam already follows applies here**: don't
+   `await` a slow network call synchronously inside the request path just
+   because `BackgroundTasks` exists — catch and log its own errors; never
+   propagate into a place nothing awaits it.
 
-## What the kit does not provide (be honest about the FastAPI gap)
-The kit's FastAPI track has **no vendored real task-queue component** — no arq/Dramatiq/Celery-on-asyncio wiring, no worker Dockerfile, no compatibility-matrix row for any of the three. `references/backend/fastapi.md`'s own "Background work" section names all three as options ("the project's task queue (Celery/arq/taskiq)") without picking one, and no `templates/backend/fastapi/` file wires any of them today (confirmed by inspection at this recipe's `last-verified` date — grep the block before trusting this claim to have not gone stale).
+## Choosing between BackgroundTasks and worker/celery
+| | `BackgroundTasks` | `worker/celery` |
+| --- | --- | --- |
+| Durability | None — lost on crash/restart | Durable — survives a worker crash (with `acks_late`) |
+| Retries | None | Declarative, exponential backoff + jitter |
+| Scheduling | None | `beat` — cron-like periodic tasks |
+| Cross-process | No — runs in the API process | Yes — separate `apps/worker` process(es), scales independently |
+| Right for | Cheap, best-effort, fine-to-lose work tied to one request | Anything retryable, scheduled, or that must not be silently dropped |
 
-A FastAPI project that needs heavier-than-`BackgroundTasks` work (retryable, scheduled, must-survive-a-restart) has two honest paths, **neither of which this kit ships today**:
-- **Add arq** (Redis-backed, `asyncio`-native, the closest fit to a FastAPI project already on Redis for caching/rate-limiting) — a new dependency, a new worker process/entrypoint, and a new compatibility-matrix row the project (or a future `template-author` pass on this kit) would need to add and pin.
-- **Run Django's Celery track's Redis instance and worker pattern against the FastAPI app's own task definitions** — viable if the project is a Django+FastAPI hybrid, but not a drop-in for a FastAPI-only project.
-
-Don't cite either as "the kit's arq component" or "the kit's Dramatiq wiring" — neither exists yet. This recipe's own honest gap, same posture as batch 1's `file-upload-s3` recipe noting the kit's missing `s3-uploads` Terraform module.
+`BackgroundTasks` remains the right default for light work on the
+FastAPI track — this recipe does not remove it, it adds the missing
+heavier option both tracks now share.
 
 ## Idempotent tasks, retries, and not blocking the request
-- **Idempotency**: Celery's default is early-ack (a crash mid-task loses the message); `acks_late=True` + `reject_on_worker_lost=True` (per `celery.md`'s "Idempotency & acks_late") means a task can run **twice** under a worker crash — only turn this on for a task that is safe to run twice (upsert by a stable key, not "increment a counter"). The same principle governs a `BackgroundTasks` callable that might legitimately fire on a retried request — write it so running twice produces the same end state, not a duplicated side effect.
-- **Retries**: prefer Celery's declarative `autoretry_for`/`retry_backoff`/`retry_backoff_max`/`retry_jitter` (per `celery.md`'s "Retries") over hand-rolled `try`/`except` — exponential backoff with jitter avoids a thundering-herd retry storm against a struggling downstream dependency.
-- **Not blocking the request**: this is the entire point of both halves of this recipe — a Celery task is dispatched with `.delay()`/`.apply_async()` and returns immediately; `BackgroundTasks` schedules its callable to run only after the response has already been sent. Never call a task function directly (`sync_order(1)` instead of `sync_order.delay(1)`) — that executes it synchronously in the request path, silently defeating the whole mechanism.
+- **Idempotency**: `acks_late=True` + `reject_on_worker_lost=True`
+  (`idempotent_task()`'s defaults) means a task can run **twice** under a
+  worker crash — only safe because every task written through this
+  decorator is upsert-shaped by convention (a stable key, not "increment
+  a counter"). The same principle governs a `BackgroundTasks` callable
+  that might legitimately fire on a retried request — write it so running
+  twice produces the same end state, not a duplicated side effect.
+- **Retries**: `idempotent_task()`'s declarative `autoretry_for`/
+  `retry_backoff`/`retry_backoff_max`/`retry_jitter` defaults (override
+  per task) over hand-rolled `try`/`except` — exponential backoff with
+  jitter avoids a thundering-herd retry storm against a struggling
+  downstream dependency.
+- **Not blocking the request**: this is the entire point of both halves
+  of this recipe — `enqueue()`/`.apply_async()` dispatches and returns
+  immediately; `BackgroundTasks` schedules its callable to run only after
+  the response has already been sent. Never call a task function directly
+  (`sync_order(1)` instead of `enqueue(TaskName.SYNC_ORDER, 1)`) — that
+  executes it synchronously in the request path, silently defeating the
+  whole mechanism.
 
 ## Doc fragment
-The portable fragment this recipe contributes to the project's root README when applied:
+The portable fragment this recipe contributes to the project's root
+README when applied:
 
 ```markdown
 ### Background jobs
-- **Setup (Django track):** Async work runs as Celery tasks (`@shared_task`) against a Redis broker, dispatched with `.delay()`/`.apply_async()` — never called directly. Slow/IO-bound tasks route to a dedicated queue with its own worker. Scheduled work uses `django-celery-beat`'s DB-backed scheduler (`beat` runs as exactly one process, never more). See `references/backend/celery.md`.
-- **Setup (FastAPI track):** Light, fire-and-forget work tied to a request uses `BackgroundTasks` — in-process, best-effort, no retry/persistence. The kit ships no real task-queue component for FastAPI today; a project needing retryable/scheduled/durable work adds arq (or another asyncio-native queue) itself — this is a project addition, not a kit-provided wire-up.
-- **Secrets:** none new — `CELERY_BROKER_URL`/`CELERY_RESULT_BACKEND` point at the project's existing Redis instance, resolved the same way as other runtime config.
-- **Maintenance:** Keep Celery/`django-celery-beat` on the versions `references/backend/celery.md`'s own "Version check" section names (re-verify before bumping — no compatibility-matrix row exists for either yet). Run exactly one `beat` process. Tasks must stay JSON-serializable (`task_serializer`/`accept_content` = `json`) — never enable `pickle`.
+- **Setup:** Retryable/scheduled/durable async work runs as Celery tasks (`idempotent_task()`-decorated, `templates/worker/celery/app/tasks/`) against a Redis broker in the `apps/worker` process, dispatched via `enqueue(TaskName.<...>, ...)` from either backend — never called directly. Slow/IO-bound tasks (named `io_*`) route to a dedicated queue automatically. Scheduled work uses `beat` (`beat` runs as exactly one process, never more) — file-based by default, DB-backed (`django-celery-beat`) as an opt-in on the Django track.
+- **Setup (light work):** Fire-and-forget work tied to one request that can afford to be lost still uses FastAPI's `BackgroundTasks` — in-process, best-effort, no retry/persistence.
+- **Secrets:** `CELERY_BROKER_URL`/`CELERY_RESULT_BACKEND` point at the project's Redis instance, resolved the same way as other runtime config — see `templates/worker/celery/docs/fragment.md`.
+- **Maintenance:** Keep Celery/redis-py on `references/compatibility-matrix.md`'s pins (redis-py's exact line is constrained by Celery's own `kombu[redis]` dependency — don't pin it independently). Run exactly one `beat` process. Tasks must stay JSON-serializable (`task_serializer`/`accept_content` = `json`) — never enable `pickle`.
 ```
 
 ---
 <!--
-Recipe authored via the `recipe-author` skill (Stage 11, #34, batch 2). Wires
-the kit's real Celery/Redis convention docs (references/backend/celery.md,
-redis.md) on the Django track and FastAPI's native BackgroundTasks per
-references/backend/fastapi.md's own "Background work" section on the FastAPI
-track. The kit has no vendored FastAPI-native task-queue component (no arq/
-Dramatiq wiring) — flagged explicitly rather than cited as existing, matching
-batch 1's file-upload-s3 recipe's honesty about the missing s3-uploads module.
+Recipe authored via the `recipe-author` skill, rewritten for issue #100:
+the worker/celery block (templates/worker/celery/) now exists, closing the
+FastAPI-track gap this recipe used to document honestly as a "project
+addition." The Django track's existing Celery posture
+(references/backend/celery.md) is unchanged in substance — the recipe now
+wires the SAME block for both tracks instead of describing two divergent
+paths.
 -->

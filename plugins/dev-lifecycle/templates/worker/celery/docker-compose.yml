@@ -1,0 +1,93 @@
+# Dev-only Docker Compose: boots this block's worker + beat processes
+# alongside their own Redis (broker) and Postgres (task DB access), so
+# `apps/worker` runs standalone for local development the same way
+# `apps/api`'s own docker-compose.yml does (backend/fastapi's and
+# backend/django's identical pattern). NOT a production deploy manifest —
+# Stage 9's devops/infrastructure block owns real deployment.
+#
+# The project-root `templates/monorepo/docker-compose.yml` also defines a
+# SHARED `redis` service (commented until this block is scaffolded in, same
+# pattern as its `web`/`admin` services) — when both `apps/api` and
+# `apps/worker` are composed together via the root compose file or `just
+# dev`, they share ONE Redis instance and ONE Postgres instance instead of
+# each running a private one; THIS file exists so the worker block still
+# runs completely standalone (e.g. iterating on a task in isolation)
+# without requiring the rest of the monorepo to be scaffolded in first.
+#
+# Postgres/Redis image tags per references/compatibility-matrix.md's
+# "Containers" row (postgres:18-bookworm, redis:8-bookworm).
+
+services:
+  db:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5433:5432" # offset from backend blocks' 5432 so both can run side by side
+    volumes:
+      - worker-block-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8-bookworm
+    ports:
+      - "6379:6379"
+    volumes:
+      - worker-block-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ENVIRONMENT: development
+    volumes:
+      - ./app:/app/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.celery_app worker --loglevel=INFO
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ENVIRONMENT: development
+    volumes:
+      - ./app:/app/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # EXACTLY ONE beat replica — never scale this service (celery.md's
+    # "Periodic tasks": two beats double-fire every scheduled task). The
+    # `worker` service above IS safe to scale (docker compose up --scale
+    # worker=N).
+    command: celery -A app.celery_app beat --loglevel=INFO
+
+volumes:
+  worker-block-db-data:
+  worker-block-redis-data:

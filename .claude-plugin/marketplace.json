@@ -1,10 +1,10 @@
 {
   "name": "eblouin-plugins",
   "owner": {
-    "name": "Emile"
+    "name": "<owner>"
   },
   "metadata": {
-    "description": "Personal development firm: lifecycle skills and a self-extending, version-aware reference library for Claude Code.",
+    "description": "A development firm's lifecycle skills and a self-extending, version-aware reference library for Claude Code.",
     "version": "0.8.29"
   },
   "plugins": [
