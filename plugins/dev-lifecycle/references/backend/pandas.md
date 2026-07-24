@@ -14,7 +14,7 @@ sources:
 
 # pandas conventions
 
-Correctness and performance idioms for pandas in the `schwab_trader` market-data pipeline (`pandas>=2.1`, `pyarrow>=14`, `numpy>=1.26`). Load when the working set touches `pandas` (imports, DataFrame/Series code). Subordinate to project conventions — these are defaults, not overrides.
+Correctness and performance idioms for pandas in a market-data pipeline (`pandas>=2.1`, `pyarrow>=14`, `numpy>=1.26`). Load when the working set touches `pandas` (imports, DataFrame/Series code). Subordinate to project conventions — these are defaults, not overrides.
 
 ## Contents
 - Version check (do this first)

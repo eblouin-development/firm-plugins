@@ -3,6 +3,33 @@
 A Claude Code plugin marketplace: the development firm's lifecycle skills and a self-extending, version-aware reference library. This repo is itself a project in the firm — changes go through the same plan → PR → review → merge → release pipeline as any other repo.
 
 > Names (`eblouin-plugins`, `dev-lifecycle`) are placeholders — rename to taste before first publish.
+>
+> **Renaming the org/repo?** Most of the codebase already derives the owner
+> and repo dynamically (`${{ github.repository }}` / `${{ github.repository_owner }}`
+> in workflows that run inside this repo, or an `owner`/`repo` input threaded
+> through the reusable Action workflows) and needs no edit. Where a literal
+> has to exist, it follows one placeholder convention — `<owner>` for the
+> GitHub handle/org, `<repo>` for this repo's name — and you fill both in at
+> the same time you do the rename:
+> - `plugins/dev-lifecycle/assets/workflows/{claude.yml,claude-review.yml}` — the
+>   `uses:` path and the `owner:`/`repo:` inputs (copied per-project, so this is
+>   a one-time substitution per project you scaffold, not per rename here)
+> - `plugins/dev-lifecycle/skills/{scaffolding,onboarding}/SKILL.md` — the wiring
+>   instructions reference the same `<owner>`/`<repo>` pair
+> - `.github/fleet-repos.txt` — replace the commented placeholder examples with
+>   your own fleet's `owner/repo` entries
+> - `.claude/settings.json` and this repo's own literal mentions (`README.md`,
+>   `docs/SETUP-AND-USAGE.md`, `.claude-plugin/marketplace.json`'s `name`) —
+>   these describe *this* repo's actual identity, so update them to match
+>   wherever you rename to
+> - `CLAUDE.md` / `.github/pull_request_template.md` — this repo's own `cc
+>   @eblouin876` convention is a literal for *this* repo's owner; update the
+>   handle to your own, or derive it if you script the rename (see #84's
+>   `${{ github.repository_owner }}` pattern used in the shared workflows)
+>
+> `scripts/validate_plugin.py` enforces the Action-wiring half of this (every
+> reusable-workflow caller must pass both `owner` and `repo`), so a stale
+> caller stub fails validation instead of silently pointing at the original repo.
 
 ## Install
 
@@ -53,6 +80,7 @@ eblouin-plugins/
         ├── claude-implement.reusable.yml    # reusable (workflow_call): the implement Action, called by each repo's claude.yml stub
         ├── claude-review.reusable.yml       # reusable (workflow_call): the review Action (incl. @claude/@owner routing), called by each repo's claude-review.yml stub
         ├── validate.yml                     # runs the validator on every push/PR (merge gate)
+        ├── template-tests.yml               # runs the template blocks' + catalog components' own test suites on every PR (merge gate)
         ├── release.yml                      # semver bump + exact tag + moving Action-contract tag (@v1) on merged PR
         ├── freshness-audit.yml              # weekly: references, templates/components, recipes, the matrix, and doc drift gone stale → tracking issue
         └── coverage-audit.yml               # weekly: fleet libraries with no reference → PR (reads .github/fleet-repos.txt)
@@ -113,3 +141,7 @@ python scripts/validate_plugin.py
 ```
 
 Make the `validate` job a **required status check** in branch protection so nothing merges without it. The workflow also runs the official `claude plugin validate` as a best-effort cross-check.
+
+`validate.yml` is structural only — it never executes a single test. `template-tests.yml` is what actually runs the template blocks' and catalog components' own test suites: the FastAPI and Django backend blocks' pytest suites (`templates/backend/{fastapi,django}/tests/`, each via its own `pyproject.toml` + `uv sync`), the 6 backend + 9 security catalog components under `templates/components/{backend,security}/` (each an ephemeral `uv run --with <matrix-pinned deps> -- pytest`, per that component's README), and the frontend catalog component's vitest suite (`templates/components/frontend`, pnpm + vitest). Every suite runs pinned to `references/compatibility-matrix.md` — never floating latest — so a version bump can't silently start failing template tests without also updating the matrix. It path-filters to `templates/**` (plus itself and the matrix file) at the job level, not via a top-level workflow trigger filter — a PR that doesn't touch those paths gets every test job reported as **skipped**, not silently never-run, which is what lets it stay a required status check without blocking merges on unrelated PRs. The weekly schedule run always runs everything, unfiltered, as a drift backstop.
+
+Its three job groups matrix-expand into one check per block/component, so make the single aggregate `template-tests-required` job (which depends on, and fails if any of, the others) a **required status check** in branch protection alongside `validate` — that's the one check to add, and it stays correct as components are added without touching branch protection again.

@@ -1,0 +1,296 @@
+name: template-tests
+
+# Runs the starter kit's own template blocks' and catalog components' test
+# suites — the thing `validate.yml` never touches (it's structural-only:
+# manifests + SKILL.md frontmatter). Without this, a functionally broken
+# block or security component could merge green. Closes #87.
+#
+# Three job groups, all pinned to references/compatibility-matrix.md (never
+# floating latest):
+#
+#   backend-blocks      — the FastAPI and Django app skeletons' own pytest
+#                          suites (templates/backend/{fastapi,django}/tests/),
+#                          via each block's own pyproject.toml + `uv sync`.
+#
+#   python-components    — the 6 backend + 9 security catalog components
+#                          under templates/components/{backend,security}/.
+#                          These are single-file drop-ins with no
+#                          pyproject.toml of their own (see each README's
+#                          "Testing" section) — run the same way a human
+#                          verifies one locally: an ephemeral `uv run --with
+#                          <pins> -- pytest <dir>` env. The dep pins below
+#                          are copied from each README's documented `Run:`
+#                          command but PINNED to the matrix/backend-block
+#                          versions (the READMEs intentionally leave
+#                          fastapi/httpx/pytest floating for a quick local
+#                          check; CI pins everything so a suite never
+#                          silently starts failing on an unrelated PR).
+#
+#   frontend-component   — templates/components/frontend (@repo/web-shared)'s
+#                          vitest suite. It has a real (non-mocked)
+#                          `@repo/api-client` workspace dependency, so this
+#                          job assembles a throwaway pnpm workspace (copied
+#                          from templates/monorepo's own workspace config)
+#                          pairing it with templates/packages/api-client,
+#                          builds the client, then runs the suite — the same
+#                          sibling-packages shape scaffolding produces in a
+#                          real project.
+#
+# Path-filtering is done at the JOB level (the `changes` job below), NOT via
+# a top-level `on.pull_request.paths`/`on.push.paths` filter. GitHub Actions
+# never reports a check run for a workflow a path filter prevented from
+# triggering at all — which leaves a *required* status check permanently
+# "Expected"/pending on any PR that doesn't touch templates/**, blocking
+# merge forever instead of passing. Triggering unconditionally and having
+# every job downstream of `changes` report "skipped" (a required check
+# treats "skipped" as passing, unlike "never ran") is what actually keeps
+# unrelated PRs (docs, other plugin skills, CI-for-CI changes) fast while
+# still letting them merge. The weekly schedule run (and workflow_dispatch)
+# always runs every job regardless of what changed, as a drift backstop —
+# e.g. a transitive dependency bump that only breaks on a fresh install,
+# with no template PR to have caught it.
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 15 * * 1" # Mondays, 15:00 UTC — full run, drift backstop
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  # Matches both backend blocks' `requires-python = ">=3.13,<3.14"`
+  # (references/compatibility-matrix.md's Python row).
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  # Determines whether templates/**, the compatibility matrix, or this
+  # workflow file itself changed, so the three test-running job groups below
+  # can skip (not fail, not vanish) on a PR that doesn't touch them. Only
+  # meaningful for pull_request/push, which carry a base/before SHA to diff
+  # against; schedule/workflow_dispatch always run everything (see the
+  # downstream jobs' own `if:`), so this job is skipped for those triggers
+  # and its (unset) output is never consulted.
+  changes:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      templates: ${{ steps.filter.outputs.templates }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the base/before commit in history to diff against
+
+      - name: Detect whether template-relevant paths changed
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$BASE_SHA"
+          else
+            base="$BEFORE_SHA"
+          fi
+          # A push that's a new branch's first commit (or a force-push)
+          # reports an all-zero BEFORE_SHA with nothing to diff against --
+          # treat that as "assume relevant" rather than error.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "templates=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" "$HEAD_SHA" | grep -Eq \
+            '^plugins/dev-lifecycle/templates/|^plugins/dev-lifecycle/references/compatibility-matrix\.md$|^\.github/workflows/template-tests\.yml$'; then
+            echo "templates=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "templates=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # --- Backend blocks: each has its own pyproject.toml + pinned dev deps ---
+  backend-blocks:
+    needs: changes
+    if: |
+      always() &&
+      (needs.changes.outputs.templates == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        block: [fastapi, django]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ${{ matrix.block }} block (pinned to pyproject.toml)
+        working-directory: plugins/dev-lifecycle/templates/backend/${{ matrix.block }}
+        run: uv sync --group dev
+
+      - name: Run ${{ matrix.block }} block test suite
+        working-directory: plugins/dev-lifecycle/templates/backend/${{ matrix.block }}
+        run: uv run pytest -q
+
+  # --- Python catalog components: no pyproject.toml, ephemeral uv envs ---
+  # Dep pins mirror references/compatibility-matrix.md's Backend — Python /
+  # Backend — Django track rows and the two backend blocks' pyproject.toml
+  # dev-dependency pins (pytest, pytest-asyncio, aiosqlite) — the exact
+  # versions the block suites above already run against.
+  python-components:
+    needs: changes
+    if: |
+      always() &&
+      (needs.changes.outputs.templates == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      # Bounds concurrent actions/checkout calls against this repo. All 15
+      # legs firing at once occasionally trips GitHub's per-repo codeload
+      # rate limit (a transient 429) -- a self-inflicted flake a REQUIRED
+      # gate can't afford. 6 keeps most of the parallelism (this matrix was
+      # the source of the observed 429) while spreading the checkout burst
+      # out.
+      max-parallel: 6
+      matrix:
+        include:
+          # -- backend/ (framework-neutral / SQLAlchemy) --
+          - name: backend/error-envelope
+            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          - name: backend/settings
+            deps: --with 'pydantic==2.13.*' --with 'pydantic-settings==2.14.*' --with 'pytest==9.1.*'
+          - name: backend/db-mixins
+            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
+          - name: backend/db-session
+            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
+          - name: backend/repository
+            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*' --with 'pydantic==2.13.*'
+          - name: backend/pagination
+            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*' --with 'pydantic==2.13.*'
+          # -- security/ (framework-neutral) --
+          - name: security/secrets-loading
+            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          - name: security/input-validation
+            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          - name: security/audit-logging
+            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          # -- security/ (fastapi + pyjwt/argon2, no django import) --
+          - name: security/auth
+            deps: --with 'pyjwt==2.13.0' --with 'argon2-cffi==25.1.0' --with 'fastapi==0.139.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
+          # -- security/ (dual fastapi+django adapters) --
+          - name: security/cors-lockdown
+            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          - name: security/rate-limiting
+            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          - name: security/idempotency
+            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          - name: security/webhook-signature
+            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          - name: security/security-headers
+            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Run ${{ matrix.name }} component test suite
+        run: |
+          uv run --python "${{ env.PYTHON_VERSION }}" ${{ matrix.deps }} -- \
+            pytest "plugins/dev-lifecycle/templates/components/${{ matrix.name }}/tests/" -q
+
+  # --- Frontend catalog component: @repo/web-shared, needs its @repo/api-client sibling ---
+  frontend-component:
+    needs: changes
+    if: |
+      always() &&
+      (needs.changes.outputs.templates == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Matches templates/monorepo/package.json's packageManager pin
+          # (references/compatibility-matrix.md's Frontend/web row).
+          version: 11.15.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Assemble a throwaway pnpm workspace (web-shared + its api-client sibling)
+        # @repo/web-shared declares "@repo/api-client": "workspace:*" and its
+        # tests import real generated symbols (no mock) — a real project gets
+        # this pairing from scaffolding materializing both under one pnpm
+        # workspace (see templates/components/frontend/README.md's
+        # "Materialized-location paths"). Reuse templates/monorepo's own
+        # workspace config (pnpm-workspace.yaml's minimumReleaseAge/
+        # allowBuilds) rather than reinventing it here.
+        run: |
+          WORKSPACE_DIR="$RUNNER_TEMP/frontend-component-workspace"
+          mkdir -p "$WORKSPACE_DIR/packages"
+          cp plugins/dev-lifecycle/templates/monorepo/package.json "$WORKSPACE_DIR/package.json"
+          cp plugins/dev-lifecycle/templates/monorepo/pnpm-workspace.yaml "$WORKSPACE_DIR/pnpm-workspace.yaml"
+          # @repo/api-client's tsconfig.json extends "../../tsconfig.base.json"
+          # (written for its materialized location, two levels below the
+          # project root — see that file's own comment) — needed for `tsc`
+          # to build it at all, even though these tests don't invoke `lint`.
+          cp plugins/dev-lifecycle/templates/monorepo/tsconfig.base.json "$WORKSPACE_DIR/tsconfig.base.json"
+          cp -R plugins/dev-lifecycle/templates/packages/api-client "$WORKSPACE_DIR/packages/api-client"
+          cp -R plugins/dev-lifecycle/templates/components/frontend "$WORKSPACE_DIR/packages/web-shared"
+          echo "WORKSPACE_DIR=$WORKSPACE_DIR" >> "$GITHUB_ENV"
+
+      - name: Install workspace dependencies
+        working-directory: ${{ env.WORKSPACE_DIR }}
+        run: pnpm install
+
+      - name: Build @repo/api-client (web-shared imports its dist/ output)
+        working-directory: ${{ env.WORKSPACE_DIR }}
+        run: pnpm --filter @repo/api-client run build
+
+      - name: Run @repo/web-shared test suite
+        working-directory: ${{ env.WORKSPACE_DIR }}
+        run: pnpm --filter @repo/web-shared run test
+
+  # Single aggregate check for branch protection. The three job groups above
+  # matrix-expand into ~18 individually-named checks (one per block/
+  # component) — impractical to enumerate as required status checks one by
+  # one, and a new component would silently need protection re-configured.
+  # This job depends on all of them (plus `changes`) and fails if any of
+  # them failed or were cancelled; branch protection only needs to require
+  # THIS one check (see README.md's "Validation" section).
+  #
+  # `if: always()` is required so this job still runs — and can still fail
+  # the gate — even when a dependency was skipped (a PR that doesn't touch
+  # templates/**, where backend-blocks/python-components/frontend-component
+  # all report "skipped") or, in the failure case this guards against,
+  # actually failed. Without `always()`, the default `needs`-propagation
+  # would skip this job too whenever any dependency isn't a plain success,
+  # which would report the required check as "skipped" (green) even on a
+  # real test failure — silently defeating the whole gate.
+  template-tests-required:
+    name: template-tests-required
+    if: always()
+    needs: [changes, backend-blocks, python-components, frontend-component]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every dependency succeeded or was legitimately skipped
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "One or more template-tests jobs failed or were cancelled:" >&2
+            echo '${{ toJSON(needs) }}' >&2
+            exit 1
+          fi
