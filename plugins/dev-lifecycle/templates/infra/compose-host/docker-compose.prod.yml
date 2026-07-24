@@ -1,0 +1,140 @@
+# Production Docker Compose overlay for infra/compose-host — "a single
+# Docker host you own" (home server OR VPS). This is NOT the dev compose
+# file a backend/frontend block ships (that's throwaway creds, bind-mounted
+# source, no TLS). This file is what actually runs unattended in production
+# on the host: app services from the other blocks, a durable Postgres with a
+# backup job, a TLS-terminating reverse proxy, and reboot-resilient restart
+# policies. See README.md's "Composition contract" for what each service
+# needs from the rest of the monorepo, and docs/fragment.md for the
+# aggregated Deployment/Maintenance/Secrets sections.
+#
+# `env_file: .env` on every service — copy `.env.example` to `.env` on the
+# host and fill it in; `.env` itself is never committed (secrets-management.md).
+#
+# Networking default here is plain public-with-TLS via Caddy (automatic
+# Let's Encrypt). For a Tailscale-only or Funnel variant, layer
+# `docker-compose.tailscale.yml` on top instead of editing this file — see
+# README.md's "Networking".
+
+services:
+  # --- Reverse proxy: TLS termination + routing to the app services -------
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # ACME account + certs — durable, back this up too
+      - caddy-config:/config
+    env_file: .env
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - edge
+      - internal
+
+  # --- App services (from the composed backend/frontend blocks) -----------
+  # Placeholder service names/images — a scaffolded project replaces `image:`
+  # with its own ECR/GHCR/registry image built by CI (see README.md NEEDS)
+  # and wires in any additional app services (apps/web, apps/admin,
+  # apps/worker) the same way: env_file: .env, restart: unless-stopped,
+  # attached to the `internal` network only (never publish app ports
+  # directly — Caddy is the only service on `edge`).
+  api:
+    image: "${API_IMAGE:?set API_IMAGE to the pushed registry image, e.g. ghcr.io/org/app-api:sha-<git-sha>}"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/readyz', timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - internal
+
+  # --- Durable data: Postgres with a named volume + a backup sidecar ------
+  db:
+    image: postgres:18-bookworm # references/compatibility-matrix.md "Data" row
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+    # No published port — reached only from other services on `internal`.
+    # SSH/Tailscale into the host for a manual psql session instead of
+    # exposing 5432 publicly (home-infra.md "Security").
+
+  # Nightly `pg_dump` to a local volume; scripts/backup.sh's own comment
+  # header covers pushing that dump off-box (rclone/rsync to object storage
+  # or another host) — untested backups are not backups (home-infra.md).
+  backup:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+      BACKUP_CRON: "${BACKUP_CRON:-0 3 * * *}" # default: 03:00 daily
+    volumes:
+      - ./scripts/backup.sh:/backup.sh:ro
+      - postgres-backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "apk add --no-cache dcron >/dev/null 2>&1 &&
+       echo \"$$BACKUP_CRON /backup.sh >> /proc/1/fd/1 2>&1\" > /etc/crontabs/root &&
+       crond -f -l 2"
+    networks:
+      - internal
+
+  # --- Basic monitoring: uptime + alerting on the key services -------------
+  # Optional (compose profile), but on by default for a fresh deploy —
+  # home-infra.md "Monitoring". Disable with `--profile monitoring` omitted,
+  # or point it at an external status page instead.
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    volumes:
+      - uptime-kuma-data:/app/data
+    networks:
+      - edge
+      - internal
+
+networks:
+  edge:
+    # Only Caddy (and, in the Tailscale overlay, the tailscale sidecar)
+    # sits on this network with a published port — see README.md
+    # "Security posture".
+  internal:
+    internal: true # app <-> db <-> backup traffic never leaves this host
+
+volumes:
+  postgres-data:
+  postgres-backups:
+  caddy-data:
+  caddy-config:
+  uptime-kuma-data:

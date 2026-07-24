@@ -24,8 +24,8 @@ What exists: cloud resources and IaC, hosts (home server/VPS), the tailnet, back
 
 ### 2. Choose / right-size the target
 Load the reference for the target:
-- **Cloud (AWS)** → `${CLAUDE_PLUGIN_ROOT}/references/infra/aws.md`.
-- **Home / beta server** → `${CLAUDE_PLUGIN_ROOT}/references/infra/home-infra.md`.
+- **Cloud (AWS)** → `${CLAUDE_PLUGIN_ROOT}/references/infra/aws.md`, composed via `${CLAUDE_PLUGIN_ROOT}/templates/infra/aws-fargate/`.
+- **A single Docker host you own (home server or VPS)** → `${CLAUDE_PLUGIN_ROOT}/references/infra/home-infra.md` for the ops posture, composed via `${CLAUDE_PLUGIN_ROOT}/templates/infra/compose-host/` — the production Compose overlay, backup job, TLS reverse proxy, and deploy scripts that make that posture runnable. Tailscale is that block's documented networking variant, not the only option.
 - **Networking / access (Tailscale)** → `${CLAUDE_PLUGIN_ROOT}/references/infra/tailscale.md`.
 For deploying an app onto provisioned infra, hand back to `${CLAUDE_PLUGIN_ROOT}/references/devops/deploy-operate.md`.
 

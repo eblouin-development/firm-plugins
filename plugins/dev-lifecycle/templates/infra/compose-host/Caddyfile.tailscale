@@ -1,0 +1,35 @@
+# Reverse-proxy config for the Tailscale networking variant
+# (docker-compose.tailscale.yml). Caddy listens on plain HTTP on the
+# tailnet-shared network namespace; `tailscale serve https / localhost:80`
+# (run once from the tailscale sidecar, or scripted in an init step) is what
+# actually terminates TLS with the tailnet's own MagicDNS cert and publishes
+# it at https://<hostname>.<tailnet>.ts.net — Caddy itself does not manage
+# certs in this mode, Tailscale does. Funnel (public, authenticated) is the
+# same `tailscale serve` config plus `tailscale funnel 443 on`, per
+# references/infra/tailscale.md.
+
+:80 {
+	encode gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		# No HSTS here — Tailscale/MagicDNS terminates the actual TLS
+		# session in front of this plain-HTTP listener.
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
