@@ -1,6 +1,6 @@
 ---
 name: "code-review"
-description: "Review code changes for correctness, breakage, best practices, DRYness, security, and performance/scalability, then either report what to fix (interactive) or take the change to merge-ready (in the PR pipeline). Use this skill WHENEVER the user asks to review code, check a diff or pull request, sanity-check changes before pushing or merging, or asks \"did I break anything\", \"is this safe\", \"look over my changes\", \"review this PR\" — and it is also the review agent in the automated pipeline. Works on live/local changes and on pull requests. By default it is read-only diagnosis; in pipeline mode it applies fixes via the build skills and re-reviews to merge-ready — but it NEVER merges. The human merges."
+description: "Review code changes for correctness, breakage, best practices, DRYness, security, and performance/scalability, then either report what to fix (interactive) or take the change to merge-ready (in the coding-session pipeline). Use this skill WHENEVER the user asks to review code, check a diff or pull request, sanity-check changes before pushing or merging, or asks \"did I break anything\", \"is this safe\", \"look over my changes\", \"review this PR\" — and it is also the review stage a `coding-session` spawns internally. Works on live/local changes and on pull requests. By default it is read-only diagnosis; in pipeline mode it applies fixes via the build skills and re-reviews to merge-ready — but it NEVER merges. The human merges."
 ---
 
 # Code review
@@ -10,7 +10,7 @@ Review the code that changed and either tell the user precisely what to fix (int
 ## Two modes
 
 - **Interactive (default).** A human asked for a review. Produce the structured, severity-ranked review and **stop** — read-only. Only make edits if the user then asks. Suggested fixes in the review are illustrative, not applied.
-- **Pipeline / review-agent.** Running as the automated reviewer on a PR the build agent opened. Review the change, then **route the outcome** so the PR moves without human intervention unless a human is actually needed (see "Routing the outcome" below). Where the reviewer has write access it may apply mechanical fixes directly and re-review; where it is diagnostic-only (the firm's `claude-review.yml` runs with `contents: read`) it routes by mention and lets the implement agent push the fixes. Either way it **stops before merge** — the human merges (`${CLAUDE_PLUGIN_ROOT}/shared/definition-of-done.md`). Use this mode when the context is an automated PR review, not a chat request.
+- **Pipeline / review-agent.** Running as the review stage inside a `coding-session` — either per-step (reviewing one step's commits before the session moves on) or as the final whole-PR review before the session flips the PR to ready. Review the change, apply fixes for its findings via the `frontend`/`backend`/`testing` skills, and re-review until it meets `${CLAUDE_PLUGIN_ROOT}/shared/definition-of-done.md` or the loop needs to escalate to the human. It **stops before merge** — the human merges. Use this mode when the context is a coding-session's internal review, not an interactive chat request.
 
 ## Core rules
 
@@ -45,17 +45,7 @@ Output a structured, prioritized review: a 1–3 sentence summary with a recomme
 Apply fixes for 🔴/🟠 findings via the `frontend`/`backend` skills (and `testing` for missing tests), then **re-review the changed code** — fixes can introduce new issues. Iterate until the change meets `${CLAUDE_PLUGIN_ROOT}/shared/definition-of-done.md`. Bound the loop: if it can't reach merge-ready in a couple of passes, or a finding is design-level or ambiguous, **stop and escalate to the human** with the diagnosis rather than thrashing or forcing a risky change. When merge-ready, approve the PR and stop — do not merge.
 
 ### 5. Hand off
-Interactive: the recommendation and the must-fix shortlist. Pipeline: the approval, a summary of fixes applied, and confirmation it's merge-ready and awaiting the human's merge — or the escalation if it isn't.
-
-### 6. Route the outcome (automated pipeline)
-Post the individual findings as plain comments **without** any `@`-mention. Then, **only once the review is complete**, close the loop with exactly **one routing comment** — the sole place a mention appears, so a tag signals "review finished," not "another comment landed." Post it on the **pull request** (not the linked issue) so the follow-up work stays attached to and visible on the PR. Choose the mention by the overall outcome, so review comments are honored autonomously and a human is pulled in only when a human is genuinely required:
-- **Clear blocker/high fixes, no decision needed** → tag **`@claude`**, instruct it to implement the findings you listed, **and include the hidden sentinel `<!-- firm:route-to-claude -->`** on its own line in that comment. The implement agent (which has write access) pushes the fixes onto the PR branch, and that push re-triggers the review on the new commit — the loop converges when the review comes back clean.
-- **Clean review (no blocker/high)** → tag **`@<owner>`** (the repo owner): merge-ready, their call. No sentinel.
-- **A decision is needed before implementation** — a design trade-off, an ambiguous requirement, an architectural choice, or anything not confidently fixable mechanically → tag **`@<owner>`**, state the decision needed, and do **not** tag `@claude` or include the sentinel.
-
-Decision-needed always wins: if even one finding needs a call, route to the owner, not `@claude`. Bound the loop — if a blocker/high finding you already routed to `@claude` is still present on re-review, don't re-route to `@claude` (omit the sentinel); route to `@<owner>` and explain the automated fix didn't resolve it. (`<owner>` is the repo owner's handle, substituted when the workflow is copied into a project.)
-
-> **Why the sentinel.** When this review runs in the automated pipeline it posts as a bot, and the implement workflow's gate re-triggers Claude on a bot comment **only** when it carries the exact hidden marker `<!-- firm:route-to-claude -->` — a bare `@claude` from a bot does nothing. This is deliberate: it stops the self-tagging loop where a bot comment that merely *mentions* `@claude` in prose (even "I'm not tagging @claude") kept re-triggering a run. So emit the sentinel on the auto-fix handoff and **nowhere else** — never on a per-finding comment or an owner-routed comment. It's an HTML comment, so it stays invisible in the rendered PR.
+Interactive: the recommendation and the must-fix shortlist. Pipeline: the approval, a summary of fixes applied, and confirmation it's merge-ready and awaiting the human's merge — or, if the loop can't converge in a couple of passes or a finding needs a design decision, the escalation back to the conducting `coding-session` with the diagnosis.
 
 ## What this skill does NOT do
 - Merge, in any mode.

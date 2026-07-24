@@ -52,7 +52,7 @@ Present in the conversation, in this shape:
 After the user confirms:
 - An umbrella issue **"Accessibility audit YYYY-MM-DD"** — posture summary and a severity-ordered task list (`- [ ]`) of the findings, labeled `accessibility`.
 - **One issue per 🔴/🟠 finding; related 🟡/⚪ findings grouped by theme** (e.g. all missing-alt-text instances as one issue) to avoid issue spam. Each in the `planning` skill's issue format (goal / context / steps / acceptance criteria) so it is directly buildable, labeled `accessibility` plus severity, registered as a native sub-issue of the umbrella, with its number on the umbrella's checklist line so the epic reconciles when it closes.
-- **Do not tag `@claude` on any of them.** An audit can produce a dozen issues; auto-triggering that many builds is chaos. The user picks which to kick off — or asks to tag specific blockers, one at a time.
+- **Do not kick off a build on any of them.** An audit can produce a dozen issues; auto-triggering that many builds is chaos. The user picks which to build via a `coding-session` — or asks to start with specific blockers, one at a time.
 
 ### 7. Hand off
 The report stands delivered; share the umbrella and finding-issue links, the single highest-priority next step, and confirm nothing in the repo was modified.
@@ -68,6 +68,6 @@ The report stands delivered; share the umbrella and finding-issue links, the sin
 - Modify markup, styles, config, or apply any fix — remediation goes through the filed issues into the pipeline.
 - Run anything beyond read-only page loads and existing lint/scan tooling — no fuzzing, no destructive interaction, nothing against a production environment without the user's own read-only access already in place.
 - File issues before the user has seen the report and confirmed.
-- Tag `@claude` on finding issues — the user controls build kickoff.
+- Kick off a build on finding issues — the user controls build kickoff.
 - Replace the accessibility work already built into `frontend`/`mobile`/`design-system`, or the `code-review` gate that checks each diff — this is the whole-project sweep those lanes don't cover.
 - Manufacture findings to look thorough, hide its own blind spots, or bury a real barrier.
