@@ -1,6 +1,6 @@
 ---
 name: "data"
-description: "Create consistent seed/fixture data and build reporting for a project — realistic development/demo/test data, and the queries, exports, or dashboards that answer questions about the app's data. Use this skill WHENEVER the work is about populating or reporting on data rather than building features: \"seed the database\", \"make some realistic test data\", \"set up fixtures\", \"build a report for X\", \"export this data\", \"add a dashboard/metrics\", \"how many users did Y\". It reuses the project's models and factories so seeding is consistent, and pushes reporting work into the database. It keeps seeding and reporting done the same way across every project."
+description: "Create consistent seed/fixture data, build reporting, and own product analytics for a project — realistic development/demo/test data, the queries/exports/dashboards that answer questions about the app's data, and event instrumentation/capture for product metrics. Use this skill WHENEVER the work is about populating, reporting on, or instrumenting data rather than building features: \"seed the database\", \"make some realistic test data\", \"set up fixtures\", \"build a report for X\", \"export this data\", \"add a dashboard/metrics\", \"how many users did Y\", \"add event tracking\", \"instrument analytics\", \"track this event\". It reuses the project's models and factories so seeding is consistent, pushes reporting work into the database, and captures product-analytics events server-side through one AnalyticsSink seam. It keeps seeding, reporting, and analytics instrumentation done the same way across every project."
 ---
 
 # Data (seed & reporting)
@@ -42,4 +42,15 @@ What seeds and reports now exist, how to run them, the output format, and any da
 - Hand-assemble data instead of using the project's factories.
 - Compute in Python what the database should aggregate (pull whole tables into memory).
 - Leak sensitive fields in a report or export.
-- Build analytics *infrastructure* (warehouses, pipelines) — that's `infrastructure`/`devops`; this is app-level seed and reporting.
+- Build analytics *infrastructure* (warehouses, pipelines, an ELT stack) — that's a project addition layered on top of `infrastructure`'s hosting/provisioning and `devops`'s pipeline patterns; this skill owns the app-level work: seed data, reporting, **and product analytics** (see below).
+
+## Product analytics
+
+Product analytics — instrumenting events, capturing them server-side, and building the metrics/dashboards that answer "how are people using this" — is this skill's job too, not a gap between `infrastructure` and `devops`. It follows the same discipline as reporting: define the question (or the event) first, push aggregation into the database/analytics store, exclude sensitive fields by default.
+
+- **Instrumentation** — a minimal typed event taxonomy (name, actor, object, properties) so events stay queryable instead of a free-form grab bag.
+- **Capture** — server-side event capture through one `AnalyticsSink` abstraction (mirroring this kit's `EmailSender` pattern), so events survive ad-blockers and stay consistent across web/mobile rather than depending solely on a client-side script.
+- **Dashboards/metrics** — the same reporting discipline above (SQL/ORM aggregation, not pulling raw events into Python) applied to the event store.
+- **Privacy by default** — no PII in event properties by default; a consent gate for any client-side tracker.
+
+See `${CLAUDE_PLUGIN_ROOT}/references/recipes/analytics.md` for the concrete wire-up (event taxonomy, `AnalyticsSink`, the privacy-respecting web-analytics default, and per-block wiring for nextjs/vite-spa/expo/fastapi/django).
