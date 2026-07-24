@@ -1,0 +1,50 @@
+{# Standalone-safe partial: included by webapp/items/list.html (the
+   full page) AND rendered directly by webapp/views.py's items_list for
+   any HX-Request caller (the debounced search input in items/list.html)
+   -- htmx.md's "a partial that's also a valid standalone HTMX response is
+   ideal" guidance, exercised for real here (unlike the login form, this
+   fragment genuinely is swapped in via htmx). The wrapping id below is
+   what the search input's hx-target/hx-swap="outerHTML" replaces. #}
+<div id="item-list-region">
+  <p class="mb-2 text-sm text-gray-500">
+    {{ total }} item{{ total|pluralize }}{% if query %} matching &ldquo;{{ query }}&rdquo;{% endif %}
+  </p>
+
+  <ul id="item-list" class="divide-y divide-gray-200 rounded-md border border-gray-200">
+    {% for item in items %}
+      {% include "webapp/partials/_item_row.html" %}
+    {% empty %}
+      <li class="px-4 py-6 text-center text-sm text-gray-500">No items yet.</li>
+    {% endfor %}
+  </ul>
+
+  {% if pages > 1 %}
+    <nav class="mt-4 flex items-center justify-between text-sm" aria-label="Item pagination">
+      {% if page > 1 %}
+        <a
+          class="underline"
+          href="?q={{ query|urlencode }}&page={{ page|add:"-1" }}"
+          hx-get="?q={{ query|urlencode }}&page={{ page|add:"-1" }}"
+          hx-target="#item-list-region"
+          hx-swap="outerHTML"
+        >&larr; Previous</a>
+      {% else %}
+        <span></span>
+      {% endif %}
+
+      <span class="text-gray-500">Page {{ page }} of {{ pages }}</span>
+
+      {% if page < pages %}
+        <a
+          class="underline"
+          href="?q={{ query|urlencode }}&page={{ page|add:"1" }}"
+          hx-get="?q={{ query|urlencode }}&page={{ page|add:"1" }}"
+          hx-target="#item-list-region"
+          hx-swap="outerHTML"
+        >Next &rarr;</a>
+      {% else %}
+        <span></span>
+      {% endif %}
+    </nav>
+  {% endif %}
+</div>

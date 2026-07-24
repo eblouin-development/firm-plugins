@@ -1,0 +1,30 @@
+{# Standalone-safe partial: included once per item by
+   _item_list.html's <ul> AND returned directly, for a SINGLE item, by
+   webapp/views.py's item_create on success (swapped in via the create
+   form's hx-target="#item-list" hx-swap="afterbegin" -- see
+   _item_create_form.html). Rendering the exact same partial both ways is
+   what keeps a freshly created row visually identical to every row
+   already in the list -- htmx.md's own "a partial that's also a valid
+   standalone HTMX response" guidance, applied to a per-row fragment
+   instead of a whole-list one. #}
+<li class="flex items-start justify-between gap-4 px-4 py-3" id="item-{{ item.id }}">
+  <div>
+    <p class="font-medium text-gray-900">{{ item.name }}</p>
+    {% if item.description %}
+      <p class="text-sm text-gray-600">{{ item.description }}</p>
+    {% endif %}
+  </div>
+  {% if principal %}
+    <form
+      method="post"
+      action="{% url 'webapp-item-delete' item.id %}"
+      hx-post="{% url 'webapp-item-delete' item.id %}"
+      hx-target="closest li"
+      hx-swap="outerHTML"
+      hx-confirm="Delete this item?"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+      <button type="submit" class="text-sm text-red-700 hover:underline">Delete</button>
+    </form>
+  {% endif %}
+</li>

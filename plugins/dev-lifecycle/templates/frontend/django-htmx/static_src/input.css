@@ -1,0 +1,27 @@
+/* Tailwind v4, CSS-first -- no tailwind.config.js/ts anywhere in this
+   block (references/compatibility-matrix.md's "Frontend — server-rendered
+   (Django + HTMX)" pin: Tailwind CSS standalone CLI 4.x / 4.3.3, the SAME
+   4.3.3 release train the Vite/Next.js blocks' own `tailwindcss` npm
+   package pins -- one Tailwind version kit-wide, a different distribution
+   mechanism here since this block has no Node toolchain at all). Content
+   scanning is automatic in v4 -- the standalone CLI walks the directory
+   tree from wherever it's invoked (see bin/download-tailwind.sh's own
+   comment and the block README's "Tailwind (standalone CLI)" section for
+   the exact invocation), so this file needs no `@source`/`content: []`
+   list naming templates/webapp/**/*.html by hand, unlike Tailwind v3. */
+@import "tailwindcss";
+
+/* htmx.md's "Show feedback during requests" guidance: htmx adds the
+   `htmx-request` class to the element driving a request (or its
+   hx-indicator target) for the request's duration. `[hx-indicator]`/
+   `.htmx-indicator` default to hidden; visible only while a request the
+   nearest ancestor with the class `htmx-request` is in flight. */
+.htmx-indicator {
+  opacity: 0;
+  transition: opacity 150ms ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  opacity: 1;
+}

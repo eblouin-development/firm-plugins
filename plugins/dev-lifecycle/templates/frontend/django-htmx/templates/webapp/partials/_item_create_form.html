@@ -1,0 +1,52 @@
+{# Standalone-safe partial: included by webapp/items/list.html AND
+   returned directly (with inline errors) by webapp/views.py's
+   item_create on a validation failure, via HX-Retarget/HX-Reswap -- see
+   that view's own comment. hx-target="#item-list" hx-swap="afterbegin"
+   is this form's SUCCESS path -- the new row's natural home; the
+   response headers above override it for the failure path only. #}
+<div id="item-create-form">
+  <form
+    method="post"
+    action="{% url 'webapp-item-create' %}"
+    hx-post="{% url 'webapp-item-create' %}"
+    hx-target="#item-list"
+    hx-swap="afterbegin"
+    hx-indicator="#item-create-indicator"
+    class="space-y-3 rounded-md border border-gray-200 p-4"
+  >
+    {# Hidden csrf_token field -- webapp/auth.py's
+       enforce_csrf_header_or_form accepts either this OR the
+       X-CSRF-Token header htmx's own configRequest listener sets
+       (base.html); the hidden field is what makes this form still work
+       with JS disabled, per htmx.md's "Progressive enhancement". #}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+
+    <div>
+      <label for="{{ create_form.name.id_for_label }}" class="block text-sm font-medium text-gray-700">
+        {{ create_form.name.label }}
+      </label>
+      {{ create_form.name }}
+      {% for error in create_form.name.errors %}
+        <p class="mt-1 text-sm text-red-700" role="alert">{{ error }}</p>
+      {% endfor %}
+    </div>
+
+    <div>
+      <label for="{{ create_form.description.id_for_label }}" class="block text-sm font-medium text-gray-700">
+        {{ create_form.description.label }} <span class="text-gray-400">(optional)</span>
+      </label>
+      {{ create_form.description }}
+      {% for error in create_form.description.errors %}
+        <p class="mt-1 text-sm text-red-700" role="alert">{{ error }}</p>
+      {% endfor %}
+    </div>
+
+    <button
+      type="submit"
+      class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+    >
+      Add item
+    </button>
+    <span id="item-create-indicator" class="htmx-indicator ml-2 text-xs text-gray-500">Adding…</span>
+  </form>
+</div>

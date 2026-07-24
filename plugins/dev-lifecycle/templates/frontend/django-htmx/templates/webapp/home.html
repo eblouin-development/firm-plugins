@@ -1,0 +1,20 @@
+{% extends "webapp/base.html" %}
+
+{% block title %}Home — django + htmx starter{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-semibold mb-4">django + htmx starter</h1>
+
+{% if principal %}
+  <p class="text-gray-700">You're signed in.</p>
+{% else %}
+  <p class="text-gray-700">
+    You are browsing as a guest. <a class="underline" href="{% url 'webapp-login' %}">Log in</a>
+    to create and delete items.
+  </p>
+{% endif %}
+
+<p class="mt-4">
+  <a class="underline" href="{% url 'webapp-items' %}">Browse items &rarr;</a>
+</p>
+{% endblock %}

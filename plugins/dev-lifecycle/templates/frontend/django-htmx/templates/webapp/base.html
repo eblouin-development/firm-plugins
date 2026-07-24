@@ -1,0 +1,62 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}django + htmx starter{% endblock %}</title>
+  {# The double-submit CSRF token this whole block reuses verbatim from
+     core.security.auth -- see webapp/context_processors.py's
+     webapp_context and the block README's "Auth & CSRF" section. #}
+  <meta name="csrf-token" content="{{ csrf_token_value }}">
+  <link rel="stylesheet" href="{% static 'css/output.css' %}">
+  <script src="{% static 'htmx/htmx.min.js' %}" defer></script>
+</head>
+<body class="min-h-screen bg-white text-gray-900 antialiased">
+  <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-gray-900 focus:px-3 focus:py-2 focus:text-white">
+    Skip to content
+  </a>
+
+  <nav class="border-b border-gray-200 px-4 py-3 flex items-center justify-between" aria-label="Primary">
+    <a href="{% url 'webapp-home' %}" class="font-semibold text-gray-900">django + htmx</a>
+    <div class="flex items-center gap-4 text-sm">
+      <a href="{% url 'webapp-items' %}" class="text-gray-700 hover:underline">Items</a>
+      {% if principal %}
+        <form method="post" action="{% url 'webapp-logout' %}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+          <button type="submit" class="text-gray-700 hover:underline">Log out</button>
+        </form>
+      {% else %}
+        <a href="{% url 'webapp-login' %}" class="text-gray-700 hover:underline">Log in</a>
+      {% endif %}
+    </div>
+  </nav>
+
+  <main id="main" class="mx-auto max-w-3xl px-4 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  {# htmx.md's Accessibility section: an aria-live region so screen-reader
+     users are told about content that updates in place after a swap
+     (validation errors, the item list refreshing). Individual partials
+     that update in place (e.g. _login_form.html) live inside/near this
+     region or set their own aria-live where noted. #}
+  <div aria-live="polite" class="sr-only" id="live-region"></div>
+
+  <script>
+    // htmx + this block's double-submit CSRF scheme (README "Auth & CSRF"):
+    // read the token from the <meta name="csrf-token"> tag rendered above
+    // (the SAME csrf_token cookie value set_auth_cookies already set) and
+    // attach it as X-CSRF-Token on every non-GET htmx request -- reusing
+    // 100% of the existing double-submit machinery, no new CSRF mechanism.
+    // This is the standard documented htmx+CSRF pattern (htmx:configRequest).
+    document.body.addEventListener("htmx:configRequest", function (evt) {
+      if (evt.detail.verb !== "get") {
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta) {
+          evt.detail.headers["X-CSRF-Token"] = meta.getAttribute("content");
+        }
+      }
+    });
+  </script>
+</body>
+</html>

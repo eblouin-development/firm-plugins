@@ -1,0 +1,47 @@
+{% extends "webapp/base.html" %}
+
+{% block title %}Items — django + htmx starter{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">Items</h1>
+
+<div class="mb-6">
+  <label for="item-search" class="block text-sm font-medium text-gray-700 mb-1">Search</label>
+  {# htmx.md's exact debounced-search pattern: hx-trigger with
+     "keyup changed delay:300ms" avoids a request storm on every
+     keystroke, plus an explicit "search" trigger so pressing Enter (an
+     input[type=search]'s native search event) also fires immediately.
+     hx-indicator + the htmx-request class (styled in static_src/input.css
+     via Tailwind's group-[.htmx-request] variant, see that file) gives
+     visible feedback during the request -- htmx.md's "don't leave the
+     user wondering whether their click registered" guidance. #}
+  <input
+    type="search"
+    id="item-search"
+    name="q"
+    value="{{ query }}"
+    placeholder="Filter by name…"
+    class="block w-full max-w-sm rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+    hx-get="{% url 'webapp-items' %}"
+    hx-trigger="keyup changed delay:300ms, search"
+    hx-target="#item-list-region"
+    hx-swap="outerHTML"
+    hx-indicator="#item-search-indicator"
+    hx-push-url="true"
+  >
+  <span id="item-search-indicator" class="htmx-indicator ml-2 text-xs text-gray-500">Searching…</span>
+</div>
+
+{% if principal %}
+  <div class="mb-8">
+    {% include "webapp/partials/_item_create_form.html" %}
+  </div>
+{% else %}
+  <p class="mb-8 text-sm text-gray-600">
+    <a class="underline" href="{% url 'webapp-login' %}?next={% url 'webapp-items' %}">Log in</a>
+    to create or delete items.
+  </p>
+{% endif %}
+
+{% include "webapp/partials/_item_list.html" %}
+{% endblock %}
