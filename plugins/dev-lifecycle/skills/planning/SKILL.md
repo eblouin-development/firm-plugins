@@ -108,6 +108,8 @@ Filing the issue is recording and delegating, not implementing — this does not
 
 Share the issue link and a one-line summary.
 
+**Where you sit in the chain:** discovery → technical-proposal → web-proposal-writer → product-planning → planning.
+
 ## What this skill does NOT do
 
 - Write production code, scaffolding, config, or migrations.
