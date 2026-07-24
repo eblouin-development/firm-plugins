@@ -89,6 +89,7 @@ Thirteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_
 | `push-notifications.md` | Expo push tokens + `expo-notifications` to a backend device-token registration endpoint and Expo's push service (a capability the kit doesn't ship yet — the recipe adds it) |
 | `realtime-websockets.md` | FastAPI's native `WebSocket` endpoint, authenticated at handshake, with a Redis pub/sub fan-out path for multi-process deployments |
 | `search.md` | PostgreSQL full-text search (`tsvector`/`tsquery` + GIN index) wired to an existing model and the `Page[T]` envelope |
+| `seo-meta-sitemap.md` | Per-route metadata, `sitemap.xml`, `robots.txt`, OG/Twitter cards, and JSON-LD into `frontend/nextjs` (Metadata API) and `backend/django` (server-rendered `<head>` + `django.contrib.sitemaps`), with `frontend/vite-spa`'s CSR indexing/social-preview limits stated honestly rather than papered over |
 | `stripe-payments.md` | Stripe Elements/Checkout to the kit's payments-security baseline — tokenized cards, verified webhooks, idempotent mutations, exact decimal money, full audit trail |
 | `transactional-email.md` | The `auth` component's `EmailSender` abstraction for verification/reset mail and any other transactional send |
 
