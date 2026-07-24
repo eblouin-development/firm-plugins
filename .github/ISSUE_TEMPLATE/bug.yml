@@ -1,0 +1,53 @@
+name: "Bug report"
+description: "Report something that's broken."
+title: "[Bug]: "
+labels:
+  - "bug"
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: "What happened"
+      description: "A clear description of the bug. Include error messages or screenshots if relevant."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior"
+      description: "What you expected to happen instead."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: "Steps to reproduce"
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: "Environment"
+      description: "Claude Code version, OS, plugin version, and anything else relevant."
+      placeholder: |
+        - Claude Code version:
+        - OS:
+        - Plugin version:
+    validations:
+      required: false
+  - type: dropdown
+    id: severity
+    attributes:
+      label: "Severity"
+      options:
+        - "Critical - blocks work / data loss"
+        - "High - major functionality broken, workaround exists"
+        - "Medium - functionality impaired"
+        - "Low - cosmetic or minor"
+      default: 2
+    validations:
+      required: true

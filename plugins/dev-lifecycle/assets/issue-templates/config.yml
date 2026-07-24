@@ -1,0 +1,5 @@
+# Shippable issue-template config — copied by `scaffolding` into a firm
+# project repo's `.github/ISSUE_TEMPLATE/`. Structured forms cover
+# feature/bug/epic; blank issues are disabled so hand-filed issues stay
+# consistent with what the planning/product-planning skills produce.
+blank_issues_enabled: false

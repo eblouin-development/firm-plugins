@@ -1,0 +1,60 @@
+name: "Feature / enhancement"
+description: "Propose a new feature or enhancement to the plugin. Mirrors the shape the `planning` skill produces, so hand-filed and skill-filed issues stay consistent."
+title: "[Feature]: "
+labels:
+  - "enhancement"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form mirrors the `planning` skill's issue shape (goal → plan → step-by-step task list → acceptance criteria). If you'd rather have Claude draft this for you, ask it to plan the feature — it will fill these same sections and can file the issue on your approval.
+  - type: textarea
+    id: goal
+    attributes:
+      label: "Goal / problem"
+      description: "One or two sentences: what are we building or fixing, and why does it matter?"
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: "Proposed approach / plan"
+      description: "The strategy at a conceptual level — key design decisions and why. Note alternatives considered, if the choice isn't obvious."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Step-by-step breakdown"
+      description: "An ordered task list of concrete, reviewable steps. This becomes the build agent's checklist."
+      placeholder: |
+        - [ ] Step one — what changes and where
+        - [ ] Step two — what changes and where
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "Acceptance criteria"
+      description: "How we'll know this is done and correct — observable behavior, edge cases, and what testing should cover."
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: "Risks & open questions"
+      description: "Things that could go wrong, decisions that need input, or unknowns — optional."
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "Priority"
+      options:
+        - "P0 - Critical"
+        - "P1 - High"
+        - "P2 - Normal"
+        - "P3 - Low"
+      default: 2
+    validations:
+      required: true
