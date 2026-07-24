@@ -1,13 +1,14 @@
 <!--
 library: redis
-versions-covered: "redis-py 5.x–8.x (sync + asyncio)"
-last-verified: 2026-07-12
-provenance: auto-generated (pending review)
+versions-covered: "redis-py 5.x–8.x (sync + asyncio); note this project's celery[redis]-resolved line is capped <6.5 by kombu — see compatibility-matrix.md"
+last-verified: 2026-07-24
+provenance: manual
 sources:
   - https://pypi.org/project/redis/
-  - https://redis.readthedocs.io/en/stable/
+  - https://pypi.org/project/redis/8.0.1/
   - https://github.com/redis/redis-py/releases
-  - https://redis.io/docs/latest/develop/clients/redis-py/
+  - https://github.com/redis/redis-py/releases/tag/v4.2.0
+  - https://raw.githubusercontent.com/redis/redis-py/master/README.md
 -->
 
 # Redis (redis-py) conventions
@@ -31,6 +32,7 @@ Python client idioms for Redis via the `redis` package (sync `redis.Redis` and a
 - **`aioredis` is dead — do not install it.** It was merged into redis-py in **4.2** as `redis.asyncio`; import `from redis.asyncio import Redis`. A separate `aioredis` package is archived and conflicts.
 - **The client API is stable across 4.x→8.x** — `Redis`, `ConnectionPool`, pipelines, and `redis.asyncio` look the same; upgrading is low-risk. Latest is **redis-py 8.0.1** (requires Python ≥3.10; 6.2+ needs 3.9+).
 - **redis-py 8.0 defaults to RESP3 on the wire** but keeps legacy RESP2 Python response shapes, so existing code is unaffected. Pin `protocol=2` to force RESP2, or `legacy_responses=False` for unified shapes. Firm apps pin `redis>=5.0` — treat 5.x–8.x as one API surface.
+- **Celery-adjacent projects don't pin `redis` directly.** When redis-py is pulled in transitively via `celery[redis]`, Celery's `kombu[redis]` dependency currently caps it below 6.5 (not yet certified for 8.x) — pinning `redis==8.0.*` alongside `celery[redis]` is unsatisfiable. In that setup, let `celery[redis]` resolve the compatible redis-py line rather than adding a direct pin; see `references/backend/celery.md` and `compatibility-matrix.md`'s redis-py row for the exact resolved version.
 
 ## Sync vs async client
 - Match the app's concurrency model. FastAPI async paths → `redis.asyncio.Redis`, `await` every call. Sync Django/Celery → `redis.Redis`.

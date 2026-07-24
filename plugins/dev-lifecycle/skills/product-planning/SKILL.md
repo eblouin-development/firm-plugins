@@ -1,11 +1,11 @@
 ---
 name: "product-planning"
-description: "Create the overarching plan for a whole product — the north star that keeps everything aligned — and break it into stages you build one at a time. Use this skill WHENEVER greenfielding a whole product or a major new system, or when the request is about the big picture rather than one feature: \"plan out the whole product\", \"what's the roadmap\", \"architect this from scratch\", \"break this into phases/milestones\", \"how should we stage this build\". It produces the product vision, the architecture and stack decisions, and a staged roadmap recorded as a GitHub epic + milestones + an ADR — then stops. It does NOT build anything or tag @claude; each stage is later planned and built through the normal planning → PR → review → merge loop. For scoping a single feature or fix, use the planning skill instead."
+description: "Create the overarching plan for a whole product — the north star that keeps everything aligned — and break it into stages you build one at a time. Use this skill WHENEVER greenfielding a whole product or a major new system, or when the request is about the big picture rather than one feature: \"plan out the whole product\", \"what's the roadmap\", \"architect this from scratch\", \"break this into phases/milestones\", \"how should we stage this build\". It produces the product vision, the architecture and stack decisions, and a staged roadmap recorded as a GitHub epic + milestones + an ADR — then stops. It does NOT build anything; each stage is later planned and built through the normal planning → coding-session → review → merge loop. For scoping a single feature or fix, use the planning skill instead."
 ---
 
 # Product planning
 
-Chart the whole product once, so that everything built afterward stays aligned to it — then build stage by stage. This skill produces the *north star*: what the product is, the architecture and stack decisions that everything inherits, and the ordered roadmap of stages. It is design and decision-making only — no implementation code, and no `@claude` build trigger. You don't build a product all at once; you set up the stages and advance through them deliberately.
+Chart the whole product once, so that everything built afterward stays aligned to it — then build stage by stage. This skill produces the *north star*: what the product is, the architecture and stack decisions that everything inherits, and the ordered roadmap of stages. It is design and decision-making only — no implementation code, and no build trigger. You don't build a product all at once; you set up the stages and advance through them deliberately.
 
 The plan lives as durable GitHub artifacts, not in chat — an epic issue, milestones, and an architecture ADR — so every later stage references a stable source of truth instead of re-deriving the product context. That's the "repo is the memory" principle at product scale (see `${CLAUDE_PLUGIN_ROOT}/shared/token-efficiency.md`).
 
@@ -14,7 +14,7 @@ The plan lives as durable GitHub artifacts, not in chat — an epic issue, miles
 - **Plan the product, not the feature.** The output is vision + architecture + a staged roadmap, not a step-by-step build. Per-stage implementation detail is the `planning` skill's job, later.
 - **Decisions here are load-bearing.** Stack, architecture, data model shape, auth approach, and cross-cutting conventions decided here constrain every stage. Record them so stages inherit them and don't re-litigate.
 - **Stage for independent, shippable progress.** Order stages so each delivers something coherent and buildable on top of the last. A good Stage 1 is a thin end-to-end slice, not all of the backend.
-- **Don't build, don't trigger.** No implementation code, no `@claude`. This skill sets up the roadmap and stops; you advance one stage at a time.
+- **Don't build, don't trigger.** No implementation code, no build trigger. This skill sets up the roadmap and stops; you advance one stage at a time.
 - **The roadmap is living.** As stages complete and you learn, revisit and adjust upcoming stages — it's a plan of record, not a contract in stone.
 
 ## Workflow
@@ -37,10 +37,10 @@ Break the product into an ordered set of stages. For each: what it delivers, why
 
 For an **epic that predates this wiring** (no markers, no numbers on its lines), backfill it once with `${CLAUDE_PLUGIN_ROOT}/assets/scripts/retrofit-epic.sh <owner/repo> <epic#> [stage-issue#…]` — it adds the markers, the numbers, and the sub-issue links, and ticks any already-merged stage. It's dry-run by default (`--apply` to write).
 
-Do **not** tag `@claude` — no stage is being built yet.
+Do **not** trigger a build — no stage is being built yet.
 
 ### 5. Hand off
-Share the epic link and the roadmap at a glance. With the repo scaffolded and the plan filed, the next move is `planning` for Stage 1 — it reads this epic and the ADR, writes the stage's implementation plan, files it under the stage milestone, and tags `@claude`. Because every stage plan references the epic and ADR, alignment holds; `code-review` can check a stage against them.
+Share the epic link and the roadmap at a glance. With the repo scaffolded and the plan filed, the next move is `planning` for Stage 1 — it reads this epic and the ADR, writes the stage's implementation plan, and files it under the stage milestone, then hands it to a `coding-session` to build. Because every stage plan references the epic and ADR, alignment holds; `code-review` can check a stage against them.
 
 So the full greenfield order is: `technical-proposal` (decide) → `scaffolding` (create & init the repo) → `product-planning` (file the epic/roadmap into it) → `planning` per stage.
 
@@ -48,6 +48,6 @@ So the full greenfield order is: `technical-proposal` (decide) → `scaffolding`
 
 ## What this skill does NOT do
 - Write implementation code, scaffolding, or configuration.
-- Tag `@claude` or trigger any build — stages are advanced deliberately via `planning`.
+- Trigger any build — stages are advanced deliberately via `planning`, then built via `coding-session`.
 - Produce per-stage step-by-step plans (that's `planning`, per stage).
 - Re-decide settled architecture on every stage — the epic and ADR are the source of truth.

@@ -1,0 +1,57 @@
+# Optional overlay: Tailscale Serve/Funnel networking instead of a public
+# ACME cert (references/infra/tailscale.md). Documented variant, NOT the
+# default — the block assumes neither a home box nor a tailnet exist unless
+# you opt in. Apply on top of docker-compose.prod.yml:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.tailscale.yml up -d
+#
+# This adds a `tailscale` sidecar joined to the tailnet (auth key from
+# .env's TS_AUTHKEY, generated in the Tailscale admin console — an
+# ephemeral, tagged, reusable key scoped to this host: `tag:server`) and
+# swaps the public Caddyfile for Caddyfile.tailscale, which serves over the
+# tailnet's own MagicDNS TLS cert (Serve) or, only when explicitly needed
+# for a client preview / cloud-agent smoke test, a Funnel-with-auth public
+# URL (tailscale.md "Exposing services: Serve vs Funnel"). Remove the
+# `caddy` service's public `80`/`443` port publish when this overlay is
+# active — Serve/Funnel replace it, not sit alongside it.
+
+services:
+  caddy:
+    # `!override` (Compose v2.24+ merge tag, see references/compatibility-matrix.md
+    # "Infra" row) replaces the base file's `ports:` list instead of the
+    # default concatenate-on-merge behavior — otherwise the public 80/443
+    # publish from docker-compose.prod.yml would survive the merge.
+    ports: !override []
+    volumes:
+      - ./Caddyfile.tailscale:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    network_mode: "service:tailscale" # share the sidecar's netns so `tailscale serve` sees Caddy on localhost
+    depends_on:
+      tailscale:
+        condition: service_started
+      api:
+        condition: service_healthy
+
+  tailscale:
+    image: tailscale/tailscale:v1.98
+    restart: unless-stopped
+    hostname: "${TS_HOSTNAME:-compose-host}"
+    environment:
+      TS_AUTHKEY: "${TS_AUTHKEY:?set TS_AUTHKEY — an ephemeral, reusable, tag:server-scoped auth key from the Tailscale admin console}"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      # Serve is on by default (tailnet-only HTTPS). Set TS_SERVE_FUNNEL=1
+      # via .env only when this host needs a public, authenticated URL
+      # (client preview, cloud-agent smoke test) — turn it back off when
+      # done (tailscale.md: "Scope it tightly and turn it off when done").
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    networks: []
+
+volumes:
+  tailscale-state:

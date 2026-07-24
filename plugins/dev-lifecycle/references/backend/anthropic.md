@@ -1,13 +1,17 @@
 <!--
 library: anthropic
-versions-covered: "anthropic Python SDK 0.x (Messages API, 2026 model line)"
-last-verified: 2026-07-11
-provenance: auto-generated (pending review)
+versions-covered: "anthropic Python SDK 0.119.x (Messages API, 2026 model line: Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5)"
+last-verified: 2026-07-24
+provenance: manual
 sources:
   - https://platform.claude.com/docs/en/about-claude/models/overview.md
   - https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking.md
+  - https://platform.claude.com/docs/en/build-with-claude/thinking.md
   - https://platform.claude.com/docs/en/build-with-claude/prompt-caching.md
+  - https://platform.claude.com/docs/en/build-with-claude/structured-outputs.md
   - https://github.com/anthropics/anthropic-sdk-python
+  - https://pypi.org/project/anthropic/
+  - https://raw.githubusercontent.com/anthropics/anthropic-sdk-python/main/src/anthropic/_constants.py
 -->
 
 # Anthropic SDK (Python) conventions
@@ -80,7 +84,7 @@ Use the exact bare alias; default to Opus unless the project chose otherwise.
 For live capability/context-window/pricing lookups, query the Models API (`client.models.retrieve(id)`) rather than hardcoding — the `capabilities` field is a nested dict.
 
 ## Thinking & effort (this changed — read it)
-On Opus 4.8/4.7 and Sonnet 5, thinking is **off** when the field is omitted — set it explicitly:
+Default-on state differs by model. On **Opus 4.8/4.7** thinking is **off** until you set it explicitly. On **Sonnet 5** (and Fable 5) thinking is **already on** with no config needed — the only thing you're opting into by setting `thinking` explicitly there is `display: "summarized"`, since `display` otherwise defaults to `"omitted"` (thinking blocks come back with an empty `thinking` field) on these newest models:
 ```python
 resp = client.messages.create(
     model="claude-opus-4-8",
@@ -93,6 +97,7 @@ resp = client.messages.create(
 - `effort` lives **inside `output_config`**, not top-level. Default is `high`; use `xhigh` for hard coding/agentic work, `low` for cheap subtasks.
 - `budget_tokens` is gone on these models — don't reintroduce it. There's no 1:1 mapping; pick an `effort` level.
 - If you surface reasoning in a UI, set `display: "summarized"` or the blocks stream with empty text (looks like a long pause).
+- Sampling params (`temperature`/`top_p`/`top_k`) return a 400 on every request on Fable 5, Opus 4.8, Opus 4.7, and Sonnet 5 — not just while thinking is active.
 
 ## Streaming (default for long output)
 Stream anything with large or open-ended output (`max_tokens` above ~16K raises a `ValueError` non-streaming):
@@ -126,7 +131,7 @@ Manual loop essentials when you need full control: loop while `stop_reason == "t
 
 ## System prompts & structured output
 - Pass instructions via the top-level `system` parameter, not a message.
-- For guaranteed-shape JSON, use `client.messages.parse(..., output_format=PydanticModel)` and read `resp.parsed_output` — validation + retry happen for you. Assistant-turn **prefills are rejected (400)** on current models; use structured output or a system instruction instead of prefilling `{`.
+- For guaranteed-shape JSON, use `client.messages.parse(..., output_format=PydanticModel)` and read `resp.parsed_output` — validation + retry happen for you. Assistant-turn **prefills are rejected (400) when combined with structured outputs**, and separately whenever thinking is active (the default on Sonnet 5/Fable 5) — use structured output or a system instruction instead of prefilling `{`.
 
 ## Prompt caching
 Caching is a **prefix match** — any byte change in the prefix invalidates everything after it. Render order is `tools` → `system` → `messages`.

@@ -15,8 +15,8 @@
 # is also filed as a native GitHub sub-issue of the epic, which gives the epic
 # a progress bar for free — this workflow is only what ticks the literal box.
 #
-# Copy this into a project's .github/workflows/ alongside claude.yml. It needs
-# no secrets and no plugin — it runs on the default GITHUB_TOKEN via `gh`.
+# Copy this into a project's .github/workflows/ alongside security.yml. It
+# needs no secrets and no plugin — it runs on the default GITHUB_TOKEN via `gh`.
 
 name: Epic checkoff
 

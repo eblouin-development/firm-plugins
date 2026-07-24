@@ -22,12 +22,12 @@ Take a repository that already exists and make it workable through the firm's pi
 ## Workflow
 
 ### 1. Determine the mode
-Check ownership/permissions: can you install the Claude GitHub App and commit to the default branch? Yes → **owned**. No, or it's someone else's project → **guest**. State which mode you're in and why before proceeding.
+Check ownership/permissions: can you commit to the default branch (admin rights)? Yes → **owned**. No, or it's someone else's project → **guest**. State which mode you're in and why before proceeding.
 
 ### 2a. Owned path
 Run the same wiring as `scaffolding`, adapted to what's already there:
 - Generate a lean `CLAUDE.md` from the detected stack, layout, and commands (see `scaffolding`).
-- Wire the pipeline exactly as `scaffolding` does: copy the firm's workflow templates from `${CLAUDE_PLUGIN_ROOT}/assets/workflows/` (`claude.yml` + `claude-review.yml`) into `.github/workflows/` with `<owner>` and `<repo>` filled in. These are now **thin caller stubs** that `uses:` the firm's **reusable workflows** in the plugin marketplace repo (pinned `@v1`) — the plugin load + prompts live there, maintained once and shared, not duplicated per repo (if the marketplace repo is private, allow this repo under its Settings → Actions → Access, or the `uses:` 403s). Authenticate with **OAuth only**: `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (never an API key, never committed) — the stub forwards it via `secrets: inherit`. **Enable Actions-created PRs** so the agent's `gh pr create` step works (the action won't open a PR itself, and review can't run without one): `gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow -F default_workflow_permissions=write -F can_approve_pull_request_reviews=true`. Then add CI gates (`${CLAUDE_PLUGIN_ROOT}/references/devops/cicd.md`), branch protection requiring CI + review, and a committed `.claude/settings.json`. Conform to any CI that already exists rather than replacing it. **Note the workflow-file limit:** `@claude` cannot commit `.github/workflows/` files (the App lacks the `workflows` permission and the action blocks it), so any workflow-authoring task ends with a manual "move the staged file into `.github/workflows/`" step — see `scaffolding`.
+- Wire the pipeline exactly as `scaffolding` does: copy the firm's workflow templates from `${CLAUDE_PLUGIN_ROOT}/assets/workflows/` (`security.yml` + `epic-checkoff.yml`) into `.github/workflows/`. These are self-contained — no owner substitution, no secret, no plugin. There is no Action to wire: the repo picks up and reviews work exclusively through the interactive `coding-session` skill. Then add CI gates (`${CLAUDE_PLUGIN_ROOT}/references/devops/cicd.md`), branch protection requiring CI + review, and a committed `.claude/settings.json`. Conform to any CI that already exists rather than replacing it.
 - In the committed `.claude/settings.json`, include the **cloud plugin-freshness** block (marketplace `autoUpdate` + a `SessionStart` hook that runs `claude plugin marketplace update <repo> && claude plugin update dev-lifecycle@<repo>`) — exactly as `scaffolding` does — so cloud sessions don't freeze the firm plugin at an old version behind the environment snapshot. See `Keeping cloud sessions current` in `docs/SETUP-AND-USAGE.md`. **Owned path only** — never on the guest path.
 - Confirm the merge gate is human (`${CLAUDE_PLUGIN_ROOT}/shared/definition-of-done.md`).
 
@@ -38,10 +38,10 @@ Set up so nothing about Claude touches the repo:
 - **Author as yourself.** Work runs under your own git identity and your own `gh` auth (on your home server/local, or a Web sandbox configured with your credentials), so commits are authored by you and any PR is opened by your account — no Claude App, no bot identity. If you only have read access, fork and PR from the fork.
 - **Neutral branch names** (`feature/…`, `fix/…`) — never `claude/…`.
 - **Scrub before every push.** Before pushing or opening a PR, grep the outgoing commit messages and the PR body for `Claude`, `Co-Authored-By`, and `Generated with`, and strip any that appear (amend/rewrite). The blanked attribution is the first line of defense; this scrub is the guarantee.
-- **No in-repo Action, no `@claude` kickoff.** The pipeline runs from your side; you trigger builds yourself. Get changes to merge-ready against *the repo's own standards and CI*, then hand the PR to whoever owns the merge.
+- **No in-repo Action.** The pipeline runs from your side via an interactive `coding-session`; you drive builds yourself. Get changes to merge-ready against *the repo's own standards and CI*, then hand the PR to whoever owns the merge.
 
 ### 3. Hand off
-State the mode, what was set up (and, for guest, confirm nothing was committed to the repo), and any references generated for your plugin. The next move is a plan (`planning`) — owned repos can tag `@claude`; guest repos you drive yourself.
+State the mode, what was set up (and, for guest, confirm nothing was committed to the repo), and any references generated for your plugin. The next move is a plan (`planning`), then a `coding-session` to build it — on both owned and guest repos, you drive it yourself.
 
 ## What this skill does NOT do
 - Leave any Claude footprint on a guest repo — no committed files, no attribution in commits/PRs/branches.

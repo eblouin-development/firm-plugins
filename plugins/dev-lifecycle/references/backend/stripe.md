@@ -1,20 +1,21 @@
 <!--
 library: stripe
-versions-covered: "stripe-python 15.3.0 / API 2026-06-24.dahlia"
-last-verified: 2026-07-12
-provenance: auto-generated (pending review)
+versions-covered: "stripe-python 15.3.1 / API 2026-06-24.dahlia"
+last-verified: 2026-07-24
+provenance: manual
 sources:
   - https://pypi.org/project/stripe/
+  - https://pypi.org/pypi/stripe/json
   - https://github.com/stripe/stripe-python/releases
   - https://raw.githubusercontent.com/stripe/stripe-python/master/README.md
-  - https://docs.stripe.com/sdks/versioning
-  - https://docs.stripe.com/webhooks
-  - https://docs.stripe.com/error-handling?lang=python
+  - https://raw.githubusercontent.com/stripe/stripe-python/master/CHANGELOG.md
+  - https://raw.githubusercontent.com/stripe/stripe-python/master/stripe/_error.py
+  - https://raw.githubusercontent.com/stripe/stripe-python/master/stripe/_webhook.py
 -->
 
 # Stripe conventions
 
-Idioms for correct, secure payments via the `stripe` Python SDK in this Django/DRF/Celery app. Load when `stripe` is in requirements. Subordinate to project conventions — where the codebase already picks a pattern, match it.
+Idioms for correct, secure payments via the `stripe` Python SDK. Load when `stripe` is in requirements. Written against a Django/DRF backend with Celery handling async webhook processing (see `django.md`/`celery.md`); adapt if the project's stack differs. Subordinate to project conventions — where the codebase already picks a pattern, match it.
 
 ## Contents
 - Version check (do this first)
@@ -30,8 +31,8 @@ Idioms for correct, secure payments via the `stripe` Python SDK in this Django/D
 
 ## Version check (do this first)
 Two independent version axes — pin both, upgrade each deliberately.
-- **SDK version:** `pip show stripe` → currently 15.3.0 (Python >=3.9). Bumping the SDK can change method surfaces (e.g. the newer `StripeClient` vs global `stripe.api_key`).
-- **Stripe API version:** date-stamped, pinned per account (Dashboard) and overridable per request. SDK 15.3.0 ships default `2026-06-24.dahlia`. Monthly releases are backward-compatible; the named major (`.dahlia`) is a **breaking-change event** — request shapes, webhook payloads, and object fields change. Upgrade against Stripe's migration guide, in test mode, never as a drive-by. Pin explicitly so an SDK bump can't silently move the API version:
+- **SDK version:** `pip show stripe` → currently 15.3.1 (Python >=3.9). Bumping the SDK can change method surfaces (e.g. the newer `StripeClient` vs global `stripe.api_key`).
+- **Stripe API version:** date-stamped, pinned per account (Dashboard) and overridable per request. SDK 15.3.1 ships default `2026-06-24.dahlia` (unchanged from 15.3.0 — 15.3.1 was a patch release with no API-version bump). Monthly releases are backward-compatible; the named major (`.dahlia`) is a **breaking-change event** — request shapes, webhook payloads, and object fields change. Upgrade against Stripe's migration guide, in test mode, never as a drive-by. Pin explicitly so an SDK bump can't silently move the API version:
 
 ```python
 import stripe

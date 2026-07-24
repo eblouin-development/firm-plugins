@@ -53,7 +53,7 @@ Present in the conversation, in this shape:
 After the user confirms (and the visibility check from Core rules passes):
 - An umbrella issue **"Security audit YYYY-MM-DD"** — posture summary and a severity-ordered task list (`- [ ]`) of the findings, labeled `security`.
 - **One issue per 🔴/🟠 finding; related 🟡/⚪ findings grouped by theme** to avoid issue spam. Each in the `planning` skill's issue format (goal / context / steps / acceptance criteria) so it is directly buildable, labeled `security` plus severity, registered as a native sub-issue of the umbrella, with its number on the umbrella's checklist line so the epic reconciles when it closes.
-- **Do not tag `@claude` on any of them.** An audit can produce a dozen issues; auto-triggering that many builds is chaos. The user picks which to kick off — or asks to tag the criticals, one at a time.
+- **Do not kick off a build on any of them.** An audit can produce a dozen issues; auto-triggering that many builds is chaos. The user picks which to build via a `coding-session` — or asks to start with the criticals, one at a time.
 
 ### 7. Hand off
 The report stands delivered; share the umbrella and finding-issue links, the single highest-priority next step, and confirm nothing in the repo was modified.
@@ -63,6 +63,6 @@ The report stands delivered; share the umbrella and finding-issue links, the sin
 - Modify code or config, or apply any fix — remediation goes through the filed issues into the pipeline.
 - Run exploits, brute force, denial-of-service, or anything against live systems — static and config analysis with read-only scans only.
 - File issues before the user has seen the report and confirmed — or file detailed vulnerabilities on a public repo without an explicit go-ahead.
-- Tag `@claude` on finding issues — the user controls build kickoff.
+- Kick off a build on finding issues — the user controls build kickoff.
 - Replace the `code-review` security gate (per-diff, every PR) or `dependency-maintenance` (the remediation lane for dependency CVEs).
 - Manufacture findings to look thorough, hide its own blind spots, or bury a real hole.

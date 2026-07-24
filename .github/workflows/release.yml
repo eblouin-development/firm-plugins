@@ -61,16 +61,5 @@ jobs:
           git commit -m "chore(release): v$NEW [skip ci]"
           # Exact plugin version tag (vX.Y.Z), for reproducibility and pinning.
           git tag "v$NEW"
-          # Moving Action-contract major tag that projects' Action caller stubs
-          # pin to (`...reusable.yml@v1`), so minor/patch workflow improvements
-          # reach the whole fleet on each release without a per-repo edit. It
-          # tracks the REUSABLE-WORKFLOW interface (inputs: owner + the OAuth
-          # secret), NOT the plugin's semver — the plugin is pre-1.0, so deriving
-          # this from $NEW would give v0. If that interface ever changes
-          # incompatibly, bump ACTION_MAJOR here and re-point the stub templates
-          # to the new @vN. Force-moved so @v1 always points at the latest release.
-          ACTION_MAJOR=1
-          git tag -f "v$ACTION_MAJOR"
           git push origin main
           git push origin "refs/tags/v$NEW"
-          git push origin -f "refs/tags/v$ACTION_MAJOR"

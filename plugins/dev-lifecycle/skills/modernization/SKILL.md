@@ -61,4 +61,4 @@ After each stage merges, report which stage completed, that parity held, and wha
 - Rewrite a part of the app for its own sake. A part with no clean kit mapping stays as-is with the seam documented, not forced onto the kit.
 - Migrate more than one stage in a single PR, or start a new stage before the current one has merged and held parity.
 - Hand-build any stage itself — every stage's implementation runs through `planning` and the build skills, exactly like any other pipeline work.
-- Tag `@claude` or file anything without going through the existing `product-planning`/`planning` issue-filing machinery.
+- Kick off a build or file anything without going through the existing `product-planning`/`planning` issue-filing machinery.
