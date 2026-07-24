@@ -74,10 +74,11 @@ Lighter drop-in slices at `plugins/dev-lifecycle/templates/components/<domain>/`
 
 ## 5. Recipes
 
-Twelve feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
+Thirteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
 
 | Recipe | What it wires |
 |---|---|
+| `analytics.md` | A new `AnalyticsSink` seam (mirroring `EmailSender`) for server-side event capture, a minimal typed event taxonomy, and a consent-gated, privacy-respecting web-analytics default across nextjs/vite-spa/expo and fastapi/django |
 | `audit-logging.md` | The `audit-logging` component into a feature's auth/admin/restricted-data actions |
 | `background-jobs.md` | Celery + Redis (Django) or `BackgroundTasks` (FastAPI, light fire-and-forget) for async work off the request path |
 | `caching.md` | Redis cache-aside — read-through, explicit TTL, write invalidation, leak-safe key naming |
