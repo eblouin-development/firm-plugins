@@ -36,25 +36,24 @@ name: template-tests
 #                          sibling-packages shape scaffolding produces in a
 #                          real project.
 #
-# Path-filtered to templates/** (+ this file + the compatibility matrix) on
-# push/PR so unrelated PRs (docs, other plugin skills, CI-for-CI changes)
-# stay fast and never wait on this workflow. The weekly schedule run has no
-# path filter (GitHub Actions doesn't apply `paths:` to `schedule` events)
-# and exists as a drift backstop — e.g. a transitive dependency bump that
-# only breaks on a fresh install, with no template PR to have caught it.
+# Path-filtering is done at the JOB level (the `changes` job below), NOT via
+# a top-level `on.pull_request.paths`/`on.push.paths` filter. GitHub Actions
+# never reports a check run for a workflow a path filter prevented from
+# triggering at all — which leaves a *required* status check permanently
+# "Expected"/pending on any PR that doesn't touch templates/**, blocking
+# merge forever instead of passing. Triggering unconditionally and having
+# every job downstream of `changes` report "skipped" (a required check
+# treats "skipped" as passing, unlike "never ran") is what actually keeps
+# unrelated PRs (docs, other plugin skills, CI-for-CI changes) fast while
+# still letting them merge. The weekly schedule run (and workflow_dispatch)
+# always runs every job regardless of what changed, as a drift backstop —
+# e.g. a transitive dependency bump that only breaks on a fresh install,
+# with no template PR to have caught it.
 
 on:
-  pull_request:
-    paths:
-      - "plugins/dev-lifecycle/templates/**"
-      - "plugins/dev-lifecycle/references/compatibility-matrix.md"
-      - ".github/workflows/template-tests.yml"
+  pull_request: {}
   push:
     branches: [main]
-    paths:
-      - "plugins/dev-lifecycle/templates/**"
-      - "plugins/dev-lifecycle/references/compatibility-matrix.md"
-      - ".github/workflows/template-tests.yml"
   schedule:
     - cron: "0 15 * * 1" # Mondays, 15:00 UTC — full run, drift backstop
   workflow_dispatch: {}
@@ -68,8 +67,59 @@ env:
   PYTHON_VERSION: "3.13"
 
 jobs:
+  # Determines whether templates/**, the compatibility matrix, or this
+  # workflow file itself changed, so the three test-running job groups below
+  # can skip (not fail, not vanish) on a PR that doesn't touch them. Only
+  # meaningful for pull_request/push, which carry a base/before SHA to diff
+  # against; schedule/workflow_dispatch always run everything (see the
+  # downstream jobs' own `if:`), so this job is skipped for those triggers
+  # and its (unset) output is never consulted.
+  changes:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      templates: ${{ steps.filter.outputs.templates }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the base/before commit in history to diff against
+
+      - name: Detect whether template-relevant paths changed
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$BASE_SHA"
+          else
+            base="$BEFORE_SHA"
+          fi
+          # A push that's a new branch's first commit (or a force-push)
+          # reports an all-zero BEFORE_SHA with nothing to diff against --
+          # treat that as "assume relevant" rather than error.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "templates=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$base" "$HEAD_SHA" | grep -Eq \
+            '^plugins/dev-lifecycle/templates/|^plugins/dev-lifecycle/references/compatibility-matrix\.md$|^\.github/workflows/template-tests\.yml$'; then
+            echo "templates=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "templates=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # --- Backend blocks: each has its own pyproject.toml + pinned dev deps ---
   backend-blocks:
+    needs: changes
+    if: |
+      always() &&
+      (needs.changes.outputs.templates == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
       matrix:
@@ -96,6 +146,12 @@ jobs:
   # dev-dependency pins (pytest, pytest-asyncio, aiosqlite) — the exact
   # versions the block suites above already run against.
   python-components:
+    needs: changes
+    if: |
+      always() &&
+      (needs.changes.outputs.templates == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
       matrix:
@@ -147,6 +203,12 @@ jobs:
 
   # --- Frontend catalog component: @repo/web-shared, needs its @repo/api-client sibling ---
   frontend-component:
+    needs: changes
+    if: |
+      always() &&
+      (needs.changes.outputs.templates == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -199,19 +261,29 @@ jobs:
   # matrix-expand into ~18 individually-named checks (one per block/
   # component) — impractical to enumerate as required status checks one by
   # one, and a new component would silently need protection re-configured.
-  # This job depends on all of them and fails if any did; branch protection
-  # only needs to require THIS one check (see README.md's "Validation"
-  # section).
+  # This job depends on all of them (plus `changes`) and fails if any of
+  # them failed or were cancelled; branch protection only needs to require
+  # THIS one check (see README.md's "Validation" section).
+  #
+  # `if: always()` is required so this job still runs — and can still fail
+  # the gate — even when a dependency was skipped (a PR that doesn't touch
+  # templates/**, where backend-blocks/python-components/frontend-component
+  # all report "skipped") or, in the failure case this guards against,
+  # actually failed. Without `always()`, the default `needs`-propagation
+  # would skip this job too whenever any dependency isn't a plain success,
+  # which would report the required check as "skipped" (green) even on a
+  # real test failure — silently defeating the whole gate.
   template-tests-required:
     name: template-tests-required
     if: always()
-    needs: [backend-blocks, python-components, frontend-component]
+    needs: [changes, backend-blocks, python-components, frontend-component]
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any template-tests job failed
+      - name: Fail unless every dependency succeeded or was legitimately skipped
         run: |
           if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || \
              [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
-            echo "One or more template-tests jobs failed or were cancelled." >&2
+            echo "One or more template-tests jobs failed or were cancelled:" >&2
+            echo '${{ toJSON(needs) }}' >&2
             exit 1
           fi
