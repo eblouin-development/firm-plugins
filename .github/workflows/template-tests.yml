@@ -12,14 +12,20 @@ name: template-tests
 #                          suites (templates/backend/{fastapi,django}/tests/),
 #                          via each block's own pyproject.toml + `uv sync`.
 #
-#   python-components    — the 6 backend + 9 security catalog components
-#                          under templates/components/{backend,security}/.
-#                          These are single-file drop-ins with no
-#                          pyproject.toml of their own (see each README's
-#                          "Testing" section) — run the same way a human
-#                          verifies one locally: an ephemeral `uv run --with
-#                          <pins> -- pytest <dir>` env. The dep pins below
-#                          are copied from each README's documented `Run:`
+#   backend-components    — the 6 backend catalog components under
+#   security-components    templates/components/{backend,security}/. These
+#                          are single-file drop-ins with no pyproject.toml of
+#                          their own (see each README's "Testing" section) —
+#                          run the same way a human verifies one locally: an
+#                          ephemeral `uv run --with <pins> -- pytest <dir>`
+#                          env. Each job checks out ONCE and loops its group's
+#                          components in a single job (rather than one
+#                          checkout-per-component matrix leg), accumulating a
+#                          fail flag across the loop and exiting non-zero at
+#                          the end if ANY component failed — so one broken
+#                          component doesn't mask failures in the others, and
+#                          the job still fails closed. The dep pins below are
+#                          copied from each README's documented `Run:`
 #                          command but PINNED to the matrix/backend-block
 #                          versions (the READMEs intentionally leave
 #                          fastapi/httpx/pytest floating for a quick local
@@ -145,68 +151,114 @@ jobs:
   # Backend — Django track rows and the two backend blocks' pyproject.toml
   # dev-dependency pins (pytest, pytest-asyncio, aiosqlite) — the exact
   # versions the block suites above already run against.
-  python-components:
+  backend-components:
     needs: changes
     if: |
       always() &&
       (needs.changes.outputs.templates == 'true' ||
        github.event_name == 'schedule' ||
        github.event_name == 'workflow_dispatch')
-    strategy:
-      fail-fast: false
-      # Bounds concurrent actions/checkout calls against this repo. All 15
-      # legs firing at once occasionally trips GitHub's per-repo codeload
-      # rate limit (a transient 429) -- a self-inflicted flake a REQUIRED
-      # gate can't afford. 6 keeps most of the parallelism (this matrix was
-      # the source of the observed 429) while spreading the checkout burst
-      # out.
-      max-parallel: 6
-      matrix:
-        include:
-          # -- backend/ (framework-neutral / SQLAlchemy) --
-          - name: backend/error-envelope
-            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
-          - name: backend/settings
-            deps: --with 'pydantic==2.13.*' --with 'pydantic-settings==2.14.*' --with 'pytest==9.1.*'
-          - name: backend/db-mixins
-            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
-          - name: backend/db-session
-            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
-          - name: backend/repository
-            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*' --with 'pydantic==2.13.*'
-          - name: backend/pagination
-            deps: --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*' --with 'pydantic==2.13.*'
-          # -- security/ (framework-neutral) --
-          - name: security/secrets-loading
-            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
-          - name: security/input-validation
-            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
-          - name: security/audit-logging
-            deps: --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
-          # -- security/ (fastapi + pyjwt/argon2, no django import) --
-          - name: security/auth
-            deps: --with 'pyjwt==2.13.0' --with 'argon2-cffi==25.1.0' --with 'fastapi==0.139.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
-          # -- security/ (dual fastapi+django adapters) --
-          - name: security/cors-lockdown
-            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
-          - name: security/rate-limiting
-            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
-          - name: security/idempotency
-            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
-          - name: security/webhook-signature
-            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
-          - name: security/security-headers
-            deps: --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
 
-      - name: Run ${{ matrix.name }} component test suite
+      - name: Run backend catalog component test suites
         run: |
-          uv run --python "${{ env.PYTHON_VERSION }}" ${{ matrix.deps }} -- \
-            pytest "plugins/dev-lifecycle/templates/components/${{ matrix.name }}/tests/" -q
+          set -uo pipefail
+          fail=0
+
+          run_component() {
+            local name="$1"
+            shift
+            echo "::group::${name}"
+            if uv run --python "${{ env.PYTHON_VERSION }}" "$@" -- \
+              pytest "plugins/dev-lifecycle/templates/components/${name}/tests/" -q; then
+              echo "PASS: ${name}"
+            else
+              echo "FAIL: ${name}"
+              fail=1
+            fi
+            echo "::endgroup::"
+          }
+
+          run_component backend/error-envelope \
+            --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          run_component backend/settings \
+            --with 'pydantic==2.13.*' --with 'pydantic-settings==2.14.*' --with 'pytest==9.1.*'
+          run_component backend/db-mixins \
+            --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
+          run_component backend/db-session \
+            --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
+          run_component backend/repository \
+            --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*' --with 'pydantic==2.13.*'
+          run_component backend/pagination \
+            --with 'sqlalchemy[asyncio]==2.0.*' --with 'aiosqlite==0.22.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*' --with 'pydantic==2.13.*'
+
+          if [ "$fail" -ne 0 ]; then
+            echo "One or more backend components failed — see the groups above." >&2
+            exit 1
+          fi
+
+  security-components:
+    needs: changes
+    if: |
+      always() &&
+      (needs.changes.outputs.templates == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Run security catalog component test suites
+        run: |
+          set -uo pipefail
+          fail=0
+
+          run_component() {
+            local name="$1"
+            shift
+            echo "::group::${name}"
+            if uv run --python "${{ env.PYTHON_VERSION }}" "$@" -- \
+              pytest "plugins/dev-lifecycle/templates/components/${name}/tests/" -q; then
+              echo "PASS: ${name}"
+            else
+              echo "FAIL: ${name}"
+              fail=1
+            fi
+            echo "::endgroup::"
+          }
+
+          # -- framework-neutral --
+          run_component security/secrets-loading \
+            --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          run_component security/input-validation \
+            --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          run_component security/audit-logging \
+            --with 'pydantic==2.13.*' --with 'pytest==9.1.*'
+          # -- fastapi + pyjwt/argon2, no django import --
+          run_component security/auth \
+            --with 'pyjwt==2.13.0' --with 'argon2-cffi==25.1.0' --with 'fastapi==0.139.*' --with 'pytest==9.1.*' --with 'pytest-asyncio==1.4.*'
+          # -- dual fastapi+django adapters --
+          run_component security/cors-lockdown \
+            --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          run_component security/rate-limiting \
+            --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          run_component security/idempotency \
+            --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          run_component security/webhook-signature \
+            --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+          run_component security/security-headers \
+            --with 'fastapi==0.139.*' --with 'httpx==0.28.*' --with 'pytest==9.1.*' --with 'django==5.2.*'
+
+          if [ "$fail" -ne 0 ]; then
+            echo "One or more security components failed — see the groups above." >&2
+            exit 1
+          fi
 
   # --- Frontend catalog component: @repo/web-shared, needs its @repo/api-client sibling ---
   frontend-component:
@@ -264,26 +316,35 @@ jobs:
         working-directory: ${{ env.WORKSPACE_DIR }}
         run: pnpm --filter @repo/web-shared run test
 
-  # Single aggregate check for branch protection. The three job groups above
-  # matrix-expand into ~18 individually-named checks (one per block/
-  # component) — impractical to enumerate as required status checks one by
-  # one, and a new component would silently need protection re-configured.
-  # This job depends on all of them (plus `changes`) and fails if any of
-  # them failed or were cancelled; branch protection only needs to require
-  # THIS one check (see README.md's "Validation" section).
+  # Single aggregate check for branch protection. backend-blocks still
+  # matrix-expands (fastapi/django); backend-components/security-components/
+  # frontend-component are each one job now — impractical (and unnecessary)
+  # to enumerate as required status checks one by one, and a new component
+  # would silently need protection re-configured. This job depends on all of
+  # them (plus `changes`) and fails if any of them failed or were cancelled;
+  # branch protection only needs to require THIS one check (see README.md's
+  # "Validation" section).
   #
   # `if: always()` is required so this job still runs — and can still fail
   # the gate — even when a dependency was skipped (a PR that doesn't touch
-  # templates/**, where backend-blocks/python-components/frontend-component
-  # all report "skipped") or, in the failure case this guards against,
-  # actually failed. Without `always()`, the default `needs`-propagation
-  # would skip this job too whenever any dependency isn't a plain success,
-  # which would report the required check as "skipped" (green) even on a
-  # real test failure — silently defeating the whole gate.
+  # templates/**, where backend-blocks/backend-components/
+  # security-components/frontend-component all report "skipped") or, in the
+  # failure case this guards against, actually failed. Without `always()`,
+  # the default `needs`-propagation would skip this job too whenever any
+  # dependency isn't a plain success, which would report the required check
+  # as "skipped" (green) even on a real test failure — silently defeating
+  # the whole gate.
   template-tests-required:
     name: template-tests-required
     if: always()
-    needs: [changes, backend-blocks, python-components, frontend-component]
+    needs:
+      [
+        changes,
+        backend-blocks,
+        backend-components,
+        security-components,
+        frontend-component,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Fail unless every dependency succeeded or was legitimately skipped
