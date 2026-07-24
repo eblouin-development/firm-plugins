@@ -53,6 +53,7 @@ eblouin-plugins/
         ├── claude-implement.reusable.yml    # reusable (workflow_call): the implement Action, called by each repo's claude.yml stub
         ├── claude-review.reusable.yml       # reusable (workflow_call): the review Action (incl. @claude/@owner routing), called by each repo's claude-review.yml stub
         ├── validate.yml                     # runs the validator on every push/PR (merge gate)
+        ├── template-tests.yml               # runs the template blocks' + catalog components' own test suites on every PR (merge gate)
         ├── release.yml                      # semver bump + exact tag + moving Action-contract tag (@v1) on merged PR
         ├── freshness-audit.yml              # weekly: references, templates/components, recipes, the matrix, and doc drift gone stale → tracking issue
         └── coverage-audit.yml               # weekly: fleet libraries with no reference → PR (reads .github/fleet-repos.txt)
@@ -113,3 +114,7 @@ python scripts/validate_plugin.py
 ```
 
 Make the `validate` job a **required status check** in branch protection so nothing merges without it. The workflow also runs the official `claude plugin validate` as a best-effort cross-check.
+
+`validate.yml` is structural only — it never executes a single test. `template-tests.yml` is what actually runs the template blocks' and catalog components' own test suites: the FastAPI and Django backend blocks' pytest suites (`templates/backend/{fastapi,django}/tests/`, each via its own `pyproject.toml` + `uv sync`), the 6 backend + 9 security catalog components under `templates/components/{backend,security}/` (each an ephemeral `uv run --with <matrix-pinned deps> -- pytest`, per that component's README), and the frontend catalog component's vitest suite (`templates/components/frontend`, pnpm + vitest). Every suite runs pinned to `references/compatibility-matrix.md` — never floating latest — so a version bump can't silently start failing template tests without also updating the matrix. It's path-filtered to `templates/**` (plus itself and the matrix file) so unrelated PRs skip it, with an unfiltered weekly run as a drift backstop.
+
+Its three job groups matrix-expand into one check per block/component, so make the single aggregate `template-tests-required` job (which depends on, and fails if any of, the others) a **required status check** in branch protection alongside `validate` — that's the one check to add, and it stays correct as components are added without touching branch protection again.
