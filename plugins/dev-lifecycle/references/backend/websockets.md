@@ -1,14 +1,16 @@
 <!--
 library: websockets
-versions-covered: "websockets 16.x (asyncio) + FastAPI WS"   # current stable websockets 16.1
-last-verified: 2026-07-12
-provenance: auto-generated (pending review)
+versions-covered: "websockets 16.x (asyncio) + FastAPI WS"   # current stable websockets 16.1.1
+last-verified: 2026-07-24
+provenance: manual
 sources:
   - https://pypi.org/project/websockets/
+  - https://github.com/python-websockets/websockets/releases
   - https://websockets.readthedocs.io/en/stable/reference/asyncio/client.html
-  - https://websockets.readthedocs.io/en/stable/faq/client.html
-  - https://github.com/python-websockets/websockets/blob/main/src/websockets/asyncio/client.py
+  - https://websockets.readthedocs.io/en/stable/topics/keepalive.html
+  - https://websockets.readthedocs.io/en/stable/reference/exceptions.html
   - https://fastapi.tiangolo.com/advanced/websockets/
+  - https://fastapi.tiangolo.com/advanced/testing-websockets/
 -->
 
 # WebSockets conventions
@@ -27,7 +29,7 @@ Idioms for the long-lived real-time layer: the `websockets` library as a **clien
 - Message schema, shutdown, testing
 
 ## Version check (do this first)
-- Current stable is **websockets 16.x** (16.1), Python **>=3.10**. Use the **new asyncio API**: `from websockets.asyncio.client import connect`. The `websockets.legacy.*` and top-level `websockets.connect` (client) map to the deprecated legacy stack — **don't** write new code against it.
+- Current stable is **websockets 16.x** (16.1.1), Python **>=3.10**. Use the **new asyncio API**: `from websockets.asyncio.client import connect`. The `websockets.legacy.*` and top-level `websockets.connect` (client) map to the deprecated legacy stack — **don't** write new code against it.
 - `websockets` is the client/standalone-server lib. **FastAPI/Starlette ship their own WS layer** (`WebSocket`, `WebSocketDisconnect`) — different API, do not import `websockets` types in a FastAPI handler.
 
 ## Client: connect + reconnect-with-backoff

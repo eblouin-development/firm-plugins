@@ -1,15 +1,19 @@
 <!--
 library: pandas
-versions-covered: "pandas 2.x (+ pyarrow, numpy)"   # real verified majors
-last-verified: 2026-07-12
-provenance: auto-generated (pending review)
+versions-covered: "pandas 2.x + 3.0.x (current 3.0.5) (+ pyarrow, numpy)"   # real verified majors
+last-verified: 2026-07-24
+provenance: manual
 sources:
+  - https://pypi.org/project/pandas/
   - https://pandas.pydata.org/docs/whatsnew/v3.0.0.html
-  - https://pandas.pydata.org/docs/whatsnew/v2.0.0.html
+  - https://pandas.pydata.org/docs/whatsnew/v2.2.0.html
+  - https://pandas.pydata.org/docs/whatsnew/v2.2.2.html
   - https://pandas.pydata.org/docs/user_guide/copy_on_write.html
   - https://pandas.pydata.org/community/blog/pandas-3.0.html
-  - https://pypi.org/project/pandas/
-  - https://arrow.apache.org/docs/python/index.html
+  - https://pandas.pydata.org/docs/reference/api/pandas.errors.ChainedAssignmentError.html
+  - https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.groupby.html
+  - https://pandas.pydata.org/docs/user_guide/pyarrow.html
+  - https://pandas.pydata.org/docs/reference/api/pandas.testing.assert_frame_equal.html
 -->
 
 # pandas conventions
@@ -36,13 +40,13 @@ Detect the installed line — behavior diverges sharply across the 2.x/3.0 bound
 import pandas as pd; pd.__version__
 ```
 - **pandas 2.x** (app floor `>=2.1`): PyArrow-backed dtypes available via `dtype_backend="pyarrow"` (since 2.0); `pd.NA` nullable scalar. **Copy-on-Write (CoW) is opt-in** — enable globally with `pd.options.mode.copy_on_write = True`; 2.2 adds a `"warn"` mode to surface future breakage. numpy 2.x is supported from **pandas 2.2.2+** (pair with `pyarrow>=14` for numpy-2 wheels).
-- **pandas 3.0** (GA 2026-01-21, current `3.0.x`): **CoW is the default and only mode.** Chained assignment silently no-ops, and `SettingWithCopyWarning` is *removed*. Requires Python `>=3.11`. Upgrade to 2.3 warning-clean before jumping to 3.0.
+- **pandas 3.0** (GA 2026-01-21, current `3.0.5`): **CoW is the default and only mode.** Chained assignment now raises `ChainedAssignmentError` instead of silently losing the write (a warning under 2.x with CoW enabled, a hard error in 3.0), and `SettingWithCopyWarning` is *removed*. Requires Python `>=3.11`. Upgrade to 2.3 warning-clean before jumping to 3.0.
 - Under CoW, any indexing result behaves as a copy — the old `SettingWithCopyWarning` heuristic is gone, so write 2.x code as if CoW is on to stay 3.0-clean.
 
 ## Copy-on-Write & chained assignment
-Chained assignment mutates a temporary and is lost under CoW (and unreliable before it):
+Chained assignment sets into a temporary indexing result and can never update the original under CoW — pandas raises `ChainedAssignmentError` to tell you so (a warning under 2.x with CoW opted in, a hard error in 3.0):
 ```python
-df[df.symbol == "AAPL"]["px"] = 0.0   # anti-pattern: no-op under CoW
+df[df.symbol == "AAPL"]["px"] = 0.0   # anti-pattern: raises ChainedAssignmentError under CoW
 df.loc[df.symbol == "AAPL", "px"] = 0.0   # single .loc, one indexing op
 ```
 Rule: one `.loc[rows, cols]` for every in-place set. To edit a slice independently, take an explicit `.copy()`. Do not sprinkle defensive `.copy()` to silence warnings — under CoW copies are already lazy/free until mutation.

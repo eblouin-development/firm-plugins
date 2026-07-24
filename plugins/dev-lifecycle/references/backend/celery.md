@@ -1,13 +1,13 @@
 <!--
 library: celery
-versions-covered: "5.x"   # current stable Celery 5.6.3; django-celery-beat 2.9.0
-last-verified: 2026-07-12
-provenance: auto-generated (pending review)
+versions-covered: "5.6.x (5.6.3); django-celery-beat 2.9.x (2.9.0)"
+last-verified: 2026-07-24
+provenance: manual
 sources:
   - https://pypi.org/project/celery/
   - https://pypi.org/project/django-celery-beat/
-  - https://docs.celeryq.dev/en/stable/userguide/tasks.html
-  - https://docs.celeryq.dev/en/stable/userguide/periodic-tasks.html
+  - https://raw.githubusercontent.com/celery/celery/main/docs/userguide/tasks.rst
+  - https://raw.githubusercontent.com/celery/celery/main/docs/userguide/periodic-tasks.rst
   - https://github.com/celery/celery/releases
 -->
 

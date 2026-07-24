@@ -1,13 +1,15 @@
 <!--
 library: slack-bolt
-versions-covered: "1.2x (Bolt for Python), Socket Mode + asyncio"
-last-verified: 2026-07-11
-provenance: auto-generated (pending review)
+versions-covered: "1.30.x (Bolt for Python), Socket Mode + asyncio"
+last-verified: 2026-07-24
+provenance: manual
 sources:
-  - https://docs.slack.dev/tools/bolt-python/concepts/socket-mode/
-  - https://docs.slack.dev/tools/bolt-python/concepts/async/
-  - https://github.com/slackapi/bolt-python/blob/main/examples/socket_mode_async.py
   - https://pypi.org/project/slack-bolt/
+  - https://raw.githubusercontent.com/slackapi/bolt-python/main/examples/socket_mode_async.py
+  - https://raw.githubusercontent.com/slackapi/bolt-python/main/slack_bolt/adapter/socket_mode/async_base_handler.py
+  - https://raw.githubusercontent.com/slackapi/bolt-python/main/slack_bolt/adapter/socket_mode/aiohttp/__init__.py
+  - https://raw.githubusercontent.com/slackapi/bolt-python/main/README.md
+  - https://github.com/slackapi/bolt-python/blob/main/slack_bolt/version.py
 -->
 
 # Slack Bolt (Python) conventions
@@ -27,7 +29,7 @@ Granular guidance for a Slack app built on `slack-bolt`. Read after detecting `s
 - Testing
 
 ## Version check (do this first)
-Confirm the installed **`slack-bolt` major/minor** (currently 1.2x; 1.29.0 is recent, Python 3.8+—3.14). Socket Mode arrived in 1.2.0, so anything ≥1.2 has it. The decisive fork is **sync vs async**: the async app is a *different* import path and every listener must be `async def` with `await`ed calls. If unsure whether a method exists in the installed version, check the current Bolt docs rather than recalling — the SDK moves and adapter modules are reorganized between minors.
+Confirm the installed **`slack-bolt` major/minor** (currently 1.3x; 1.30.0 is current as of Jul 15 2026, Python 3.7+—3.14 per the PyPI classifiers). Socket Mode has been present for many releases — any reasonably current 1.x install has it; don't gate on a specific minor. The decisive fork is **sync vs async**: the async app is a *different* import path and every listener must be `async def` with `await`ed calls. If unsure whether a method exists in the installed version, check the current Bolt docs rather than recalling — the SDK moves and adapter modules are reorganized between minors.
 
 ## Sync vs async (pick one and stay on it)
 Bolt ships two parallel APIs. Choose based on the surrounding app (FastAPI/`asyncio` → async; a plain worker → sync) and never mix them.

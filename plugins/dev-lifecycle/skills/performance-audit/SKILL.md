@@ -61,7 +61,7 @@ Present in the conversation, in this shape:
 After the user confirms:
 - An umbrella issue **"Performance audit YYYY-MM-DD"** — posture summary and a severity-ordered task list (`- [ ]`) of the findings, labeled `performance`.
 - **One issue per 🔴/🟠 finding; related 🟡/⚪ findings grouped by theme** to avoid issue spam. Each in the `planning` skill's issue format (goal / current state & context / step-by-step breakdown / acceptance criteria) so it is directly buildable by the `backend` or `frontend` skill, labeled `performance` plus severity, registered as a native sub-issue of the umbrella, with its number on the umbrella's checklist line so the epic reconciles when it closes.
-- **Do not tag `@claude` on any of them.** An audit can produce a dozen issues; auto-triggering that many builds is chaos. The user picks which to kick off — or asks to tag the criticals, one at a time.
+- **Do not kick off a build on any of them.** An audit can produce a dozen issues; auto-triggering that many builds is chaos. The user picks which to build via a `coding-session` — or asks to start with the criticals, one at a time.
 
 ### 7. Hand off
 
@@ -72,7 +72,7 @@ The report stands delivered; share the umbrella and finding-issue links, the sin
 - Modify code or config, or apply any fix — remediation goes through the filed issues into the pipeline, built by `backend`/`frontend`/the relevant build skill.
 - Load-test production or any shared environment without explicit sign-off, or load-test a third-party/partner endpoint.
 - File issues before the user has seen the report and confirmed.
-- Tag `@claude` on finding issues — the user controls build kickoff.
+- Kick off a build on finding issues — the user controls build kickoff.
 - Replace the `code-review` performance dimension (per-diff, every PR) or `debugging` (root-causing one already-observed slow case).
 - Replace `security-audit` — that skill assesses security posture (vulnerabilities, attack surface); this one assesses performance posture (speed, capacity). A surface that's both slow and insecure (e.g. an unbounded endpoint that's also a DoS vector) gets a performance finding here and a security finding there, filed independently.
 - Own SEO ranking or crawlability — Core Web Vitals findings note the overlap and point to the `seo` skill by name; this audit's lane is user-experience and rendering performance.

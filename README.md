@@ -6,14 +6,10 @@ A Claude Code plugin marketplace: the development firm's lifecycle skills and a 
 >
 > **Renaming the org/repo?** Most of the codebase already derives the owner
 > and repo dynamically (`${{ github.repository }}` / `${{ github.repository_owner }}`
-> in workflows that run inside this repo, or an `owner`/`repo` input threaded
-> through the reusable Action workflows) and needs no edit. Where a literal
+> in workflows that run inside this repo) and needs no edit. Where a literal
 > has to exist, it follows one placeholder convention — `<owner>` for the
 > GitHub handle/org, `<repo>` for this repo's name — and you fill both in at
 > the same time you do the rename:
-> - `plugins/dev-lifecycle/assets/workflows/{claude.yml,claude-review.yml}` — the
->   `uses:` path and the `owner:`/`repo:` inputs (copied per-project, so this is
->   a one-time substitution per project you scaffold, not per rename here)
 > - `plugins/dev-lifecycle/skills/{scaffolding,onboarding}/SKILL.md` — the wiring
 >   instructions reference the same `<owner>`/`<repo>` pair
 > - `.github/fleet-repos.txt` — replace the commented placeholder examples with
@@ -26,10 +22,6 @@ A Claude Code plugin marketplace: the development firm's lifecycle skills and a 
 >   @eblouin876` convention is a literal for *this* repo's owner; update the
 >   handle to your own, or derive it if you script the rename (see #84's
 >   `${{ github.repository_owner }}` pattern used in the shared workflows)
->
-> `scripts/validate_plugin.py` enforces the Action-wiring half of this (every
-> reusable-workflow caller must pass both `owner` and `repo`), so a stale
-> caller stub fails validation instead of silently pointing at the original repo.
 
 ## Install
 
@@ -48,7 +40,7 @@ eblouin-plugins/
 ├── plugins/dev-lifecycle/
 │   ├── .claude-plugin/plugin.json       # plugin manifest (semver)
 │   ├── skills/<skill>/SKILL.md          # one folder per skill, incl. template-author, recipe-author
-│   ├── assets/workflows/                # workflows copied into each repo: thin caller stubs (implement + review) that `uses:` the reusable workflows below, epic-checkoff (ticks an epic's box on stage-issue close), and security.yml (the self-contained CI security gate — SAST/secret/dep-CVE/IaC/image scans)
+│   ├── assets/workflows/                # workflows copied into each repo: epic-checkoff (ticks an epic's box on stage-issue close) and security.yml (the self-contained CI security gate — SAST/secret/dep-CVE/IaC/image scans)
 │   ├── assets/scripts/                  # operator one-shots — retrofit-epic.sh backfills a pre-existing epic so epic-checkoff works on it
 │   ├── assets/pr/                       # shippable templates `scaffolding` copies into project repos, e.g. pull_request_template.md
 │   ├── shared/                          # cross-skill references
@@ -77,11 +69,9 @@ eblouin-plugins/
 └── .github/
     ├── pull_request_template.md         # this repo's own PR template (plugin-specific gates)
     └── workflows/
-        ├── claude-implement.reusable.yml    # reusable (workflow_call): the implement Action, called by each repo's claude.yml stub
-        ├── claude-review.reusable.yml       # reusable (workflow_call): the review Action (incl. @claude/@owner routing), called by each repo's claude-review.yml stub
         ├── validate.yml                     # runs the validator on every push/PR (merge gate)
         ├── template-tests.yml               # runs the template blocks' + catalog components' own test suites on every PR (merge gate)
-        ├── release.yml                      # semver bump + exact tag + moving Action-contract tag (@v1) on merged PR
+        ├── release.yml                      # semver bump + exact tag on merged PR
         ├── freshness-audit.yml              # weekly: references, templates/components, recipes, the matrix, and doc drift gone stale → tracking issue
         └── coverage-audit.yml               # weekly: fleet libraries with no reference → PR (reads .github/fleet-repos.txt)
 ```
@@ -125,11 +115,9 @@ Both carry the same kind of metadata header as a reference (`last-verified`, `pr
 
 Version lives in `plugin.json` and `marketplace.json`. `release.yml` bumps it on a merged PR based on a label — `release:major` / `release:minor` / `release:patch` (default patch) — then tags. Users only receive updates when the version bumps, so an in-progress push never destabilizes a working session. Roll back by pointing the catalog entry at a prior tag/commit.
 
-Each release also force-moves a **moving Action-contract tag** (`v1`) onto the release commit. Projects' Action caller stubs pin to it (`...reusable.yml@v1`), so improvements to the implement/review workflows reach the whole fleet on release — same "only on version bump" model as the plugin — without editing any project's `.github/workflows/`. The tag tracks the reusable-workflow *interface* (its inputs), not the plugin's semver; if that interface ever changes incompatibly, bump `ACTION_MAJOR` in `release.yml` and re-point the stub templates to the new `@vN`.
-
 ## Owned vs guest repos
 
-- **Owned:** full in-repo pipeline — committed Action, branch protection, committed `.claude/settings.json` + `CLAUDE.md`. Set up by the `scaffolding` skill.
+- **Owned:** full in-repo pipeline — CI workflows, branch protection, committed `.claude/settings.json` + `CLAUDE.md`. Set up by the `scaffolding` skill. Work is picked up and reviewed through the interactive `coding-session` skill, not a GitHub Action.
 - **Guest (repos you don't own):** zero footprint. The skill library rides in via this user-installed plugin — nothing added to the repo. Project-local config goes in untracked files excluded via `.git/info/exclude`. Work runs under your own identity, so commits and PRs are yours; attribution is blanked (`{"attribution":{"commit":"","pr":""}}` in `~/.claude/settings.json`) and the `onboarding` skill scrubs any residual Claude attribution before push. Set up by the `onboarding` skill.
 
 ## Validation

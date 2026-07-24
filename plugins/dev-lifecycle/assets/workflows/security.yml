@@ -10,8 +10,8 @@
 # tooling (CI scanners)" section — bump versions there, not here.
 #
 # Copied by scaffolding into a project's .github/workflows/ alongside
-# claude.yml / claude-review.yml / epic-checkoff.yml. Self-contained: no
-# plugin, no extra secrets — runs entirely on the default GITHUB_TOKEN.
+# epic-checkoff.yml. Self-contained: no plugin, no extra secrets — runs
+# entirely on the default GITHUB_TOKEN.
 # Each job is conditional-smart so a project missing a given stack (no
 # Python, no Terraform, ...) skips that job cleanly instead of failing.
 #

@@ -1,0 +1,47 @@
+# Reverse proxy + automatic TLS (Let's Encrypt) for infra/compose-host's
+# default "plain public-with-TLS" networking mode — see README.md
+# "Networking". Caddy renews certs itself; no manual ACM/cert-manager step.
+#
+# Replace `${DOMAIN}` (from .env) with the project's real domain(s) before
+# first boot — Caddy needs a resolvable A/AAAA record pointing at this host
+# to complete the ACME HTTP-01/TLS-ALPN-01 challenge. For a Tailscale-only
+# or Funnel deploy, this file is NOT used — see docker-compose.tailscale.yml
+# and its own Caddyfile.tailscale instead (Caddy's `tls internal` / Tailscale
+# terminates TLS there, this public ACME config would only fail challenges
+# on a tailnet-only host).
+
+{
+	# Security headers applied to every response, per secure-baseline.md.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$DOMAIN} {
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# API under /api/*; adjust the path/port split to match the project's
+	# actual frontend + backend shape (a vite-spa served as static files
+	# needs its own `file_server` block instead of a second reverse_proxy).
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -1,15 +1,15 @@
 <!--
 library: kubernetes
-versions-covered: "Kubernetes 1.3x"   # verified current stable minor: 1.36 (1.36.2, three-release window 1.34–1.36)
-last-verified: 2026-07-12
-provenance: auto-generated (pending review)
+versions-covered: "Kubernetes 1.36.x"   # verified current stable minor: 1.36 (1.36.3, released 2026-07-23; three-release support window 1.34–1.36; 1.37 is beta-only as of this pin)
+last-verified: 2026-07-24
+provenance: manual
 sources:
-  - https://kubernetes.io/releases/
-  - https://kubernetes.io/docs/reference/using-api/deprecation-guide/
-  - https://kubernetes.io/docs/setup/release/version-skew-policy/
-  - https://kubernetes.io/docs/concepts/security/pod-security-admission/
-  - https://kubernetes.io/docs/concepts/security/pod-security-standards/
-  - https://kubernetes.io/docs/concepts/services-networking/network-policies/
+  - https://github.com/kubernetes/kubernetes/releases
+  - https://raw.githubusercontent.com/kubernetes/kubernetes/master/CHANGELOG/README.md
+  - https://raw.githubusercontent.com/kubernetes/website/main/content/en/releases/version-skew-policy.md
+  - https://raw.githubusercontent.com/kubernetes/website/main/content/en/docs/reference/using-api/deprecation-guide.md
+  - https://raw.githubusercontent.com/kubernetes/website/main/content/en/docs/concepts/security/pod-security-admission.md
+  - https://raw.githubusercontent.com/kubernetes/website/main/content/en/docs/concepts/security/pod-security-standards.md
   - https://pypi.org/project/kubernetes/
 -->
 
@@ -32,7 +32,7 @@ Writing correct, secure, production-grade K8s manifests and the deploy workflow.
 - Security baseline (Pod Security Admission)
 
 ## Version check (do this first)
-- Current stable is **1.36**; upstream supports the latest three minors (~1.34–1.36). Pin manifests to **GA API groups**, never removed betas.
+- Current stable is **1.36** (patch 1.36.3, released 2026-07-23); upstream supports the latest three minors (~1.34–1.36). 1.37 is beta-only as of this pin — do not target it yet. Pin manifests to **GA API groups**, never removed betas. This kit's `compatibility-matrix.md` does not pin a Kubernetes version — set your project's target minor from the cluster you actually deploy to, not from this file.
 - GA groups to use: `apps/v1` (workloads), `batch/v1` (Job/CronJob), `networking.k8s.io/v1` (Ingress, NetworkPolicy), `policy/v1` (PodDisruptionBudget), `autoscaling/v2` (HPA), `rbac.authorization.k8s.io/v1`, `v1` (Pod/Service/ConfigMap/Secret/PVC).
 - Removed betas that still appear in stale manifests: `extensions/v1beta1` + `apps/v1beta*` (workloads/Ingress), `batch/v1beta1` CronJob, `policy/v1beta1` PDB, `autoscaling/v2beta*`, and `PodSecurityPolicy` (gone since 1.25 → use Pod Security Admission). `kubectl explain <kind>` shows the served version; `kubectl api-resources` lists what the cluster serves.
 - Respect the **version skew policy**: kubelet may trail kube-apiserver by up to 3 minors, `kubectl` within ±1 minor; upgrade one minor at a time, never skip.
@@ -79,7 +79,7 @@ Every container spec MUST have all of these — a manifest missing any is not pr
 - **GitOps**: git is the source of truth; a controller (Argo CD/Flux) reconciles the cluster to the repo. Prefer this over `kubectl apply` from laptops/CI for prod.
 
 ## The Python `kubernetes` client
-- PyPI `kubernetes` current major is **36** (tracks the 1.x server minor, so `kubernetes==36.x` ↔ server 1.36); pin the major to your cluster. The app declares `kubernetes>=29` — bump toward the cluster's minor.
+- PyPI `kubernetes` current major is **36** (tracks the 1.x server minor, so `kubernetes==36.x` ↔ server 1.36); pin the major to your cluster, e.g. `kubernetes>=29,<30` for a 1.29 cluster — bump the floor toward the cluster's actual minor as you upgrade.
 - In-cluster: `config.load_incluster_config()` (uses the pod's mounted ServiceAccount token); off-cluster: `config.load_kube_config()`.
 - Use the **watch** API (`watch.Watch().stream(...)`) for event-driven orchestration rather than polling; handle `410 Gone` by re-listing to refresh the resourceVersion.
 - The app's ServiceAccount needs a **tightly scoped Role** for exactly the objects it manages (e.g. create/list/delete tenant Deployments in specific namespaces) — a programmatic orchestrator is a prime privilege-escalation target, so no wildcard verbs.

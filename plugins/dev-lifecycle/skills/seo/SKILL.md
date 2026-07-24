@@ -55,7 +55,7 @@ State plainly what wasn't checked — no Search Console access, a route behind a
 5. **Findings** — severity order, each with impact, evidence, remediation sketch, and the owning skill if it's not this one.
 6. **Roadmap** — ordered by rankability impact and by dependency (fix a hard `noindex` block before polishing structured data on the same page).
 
-Audit mode does not file GitHub issues itself unless the user asks — this is a lighter, faster loop than `security-audit`'s umbrella-issue pipeline since SEO findings are typically metadata-scoped and clear individually; if the user wants findings tracked, file them in the `planning` skill's issue format (goal / context / steps / acceptance criteria), one per finding or grouped by page/theme, without tagging `@claude` unless the user says to kick one off.
+Audit mode does not file GitHub issues itself unless the user asks — this is a lighter, faster loop than `security-audit`'s umbrella-issue pipeline since SEO findings are typically metadata-scoped and clear individually; if the user wants findings tracked, file them in the `planning` skill's issue format (goal / context / steps / acceptance criteria), one per finding or grouped by page/theme, without kicking off a build unless the user says to start one via a `coding-session`.
 
 ## Implementation mode
 

@@ -51,7 +51,7 @@ Present in the conversation, in this shape:
 After the user confirms (and the visibility check from Core rules passes):
 - An umbrella issue **"Privacy compliance audit YYYY-MM-DD"** — posture summary, jurisdictions assessed, and a severity-ordered task list (`- [ ]`) of findings, labeled `privacy`.
 - **One issue per 🔴/🟠 finding; related 🟡/⚪ findings grouped by theme**, in the `planning` skill's issue format (goal / context / steps / acceptance criteria) so each is directly buildable — pointing at the GDPR data-rights recipe by name where a finding is exactly what that recipe wires up. Labeled `privacy` plus severity, registered as a native sub-issue of the umbrella. Findings marked **needs legal review** are filed as-is (not resolved into a build task) with that label so they route to a human decision, not a build agent.
-- **Do not tag `@claude`** on any of them — the user decides what to kick off and when legal sign-off is needed first.
+- **Do not kick off a build** on any of them — the user decides what to build (via a `coding-session`) and when legal sign-off is needed first.
 
 ### 6. Hand off
 Share the umbrella and finding-issue links, the single highest-priority next step, which findings need a lawyer before any build work starts, and confirm nothing in the repo was modified.

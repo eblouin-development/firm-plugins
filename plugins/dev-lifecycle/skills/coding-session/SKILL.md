@@ -11,14 +11,9 @@ It orchestrates by **spawning subagents**, one per stage of work, each briefed t
 
 There are exactly **two standing human gates**: the user approves the scope (and with it, the autonomy contract — where the session will and won't stop) before any code is written, and the user reviews, signs off on, and merges the finished PR. Between those gates the session self-directs: it builds the feature step by step on one branch, reviewing each step internally, and stops **only** at a checkpoint the approved plan declared or at a decision that genuinely needs the human. Steps never get their own PRs or their own merges. The session never merges — merge is the human's call (`${CLAUDE_PLUGIN_ROOT}/shared/definition-of-done.md`).
 
-## Relationship to the headless Action pipeline
+## This is the pipeline
 
-The firm has two ways to run the same loop, and this skill is one of them:
-
-- **Headless Action pipeline** — `@claude` on a GitHub issue triggers the implement Action, which opens a PR; the review Action runs on the PR and routes `@claude`/`@owner` by outcome. It self-drives on GitHub with no thread attached. This is the fleet default for work kicked off from an issue.
-- **Coding session (this skill)** — the loop is driven from an interactive thread using **local subagents**, so you watch it happen, keep a human in the loop at the gates, and flow straight into the next feature when a PR merges. Use this when you're sitting down to build something and want to conduct it, not fire-and-forget.
-
-They are compatible: both produce one PR that closes one issue, so a piece of work can start in a session and be finished by the Action, or vice versa. Pick the session when a person is driving; pick the Action when the trigger is a GitHub event. Don't run both on the same issue at once — you'll get duplicate build agents racing on one branch.
+The firm runs the whole plan → build → review → merge loop through this skill — an interactive session driven from a thread using **local subagents**, so a human watches it happen, is kept in the loop at the gates, and flows straight into the next feature when a PR merges. There is no separate headless path: GitHub mentions and PR/issue events no longer trigger any build or review Action. Every feature is picked up and built the same way — through a coding session, run locally or from Claude Code on the web.
 
 ## Core rules
 
@@ -58,7 +53,7 @@ Rules of thumb:
 
 Two entry points:
 
-- **Scope new work.** The user is starting something fresh. Run the `planning` skill (or `product-planning` for a whole product) to investigate and draft the plan — spawn the planner on **`opus`** (see "Model routing"). Planning owns the investigate → draft → iterate loop; let it. Do **not** let planning file the issue and tag `@claude` yet — in a session, filing and the build trigger are the session's job (step 3), because the session drives the build with local subagents rather than the Action. Carry the draft plan into step 2.
+- **Scope new work.** The user is starting something fresh. Run the `planning` skill (or `product-planning` for a whole product) to investigate and draft the plan — spawn the planner on **`opus`** (see "Model routing"). Planning owns the investigate → draft → iterate loop; let it. Do **not** let planning file the issue yet — in a session, filing is the session's job (step 3), because the session drives the build itself with local subagents. Carry the draft plan into step 2.
 - **Pick up an existing epic or issue.** The user points at an epic or issue already on GitHub. Read it (and its ADR/epic parent if any). If it's an **epic**, identify the next unstarted stage — the first `- [ ]` line / open sub-issue in roadmap order — and make *that stage* the feature for this pass; run `planning` on it if its issue is still a stub. If it's a **single issue** with an actionable plan already, use it as-is. Confirm with the user which feature you're picking up before proceeding.
 
 Either way you arrive at **one feature** with a step-by-step plan concrete enough to build from.
@@ -84,7 +79,7 @@ On approval, file/update the work in GitHub in the right shape (this is `plannin
 
 **Mark the feature issue in-progress.** Apply an `in-progress` label (create the label if the repo doesn't have one — a distinct color, description "actively being built in a coding session"). Label the epic in-progress too while a session is advancing it. Remove the label when the feature's PR merges (step 8); the closing issue is the completion signal, the label just says "a session has this right now" and prevents two drivers colliding.
 
-Do **not** tag `@claude` on the issue — in a session the *session* drives the build via local subagents (step 4), so tagging the Action too would start a second, racing build. (Tagging `@claude` is the handoff for the *headless* path, not this one.)
+The session itself drives the build via local subagents (step 4) — there is no Action to hand off to.
 
 ### 4. Build — steps land as commits on one feature branch
 
@@ -165,6 +160,5 @@ Then **stop and wait**. This is gate 2; the session does not merge. If the user 
 - Stop mid-flight for anything except a declared checkpoint or a genuine escalation — no per-step check-ins, no PR-per-step, no asking the user to merge increments of a feature.
 - Open more than one PR per feature, or run two build agents on the feature branch at once.
 - Flip the PR from draft to ready before the final whole-PR review is clean.
-- Tag `@claude` to trigger the headless Action while it's also driving the build locally (that races two build agents on one branch).
 - Inline the build or the review into the conducting thread instead of spawning a subagent for each.
 - Open a duplicate issue when picking up existing work — update in place.
