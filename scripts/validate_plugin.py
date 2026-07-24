@@ -127,11 +127,11 @@ skill_names = {os.path.basename(os.path.dirname(p)) for p in skills}
 #    "stop at backtick" logic is needed — it's implicit in the charset).
 #    A trailing "." or "/" picked up from a path that closes a sentence
 #    (e.g. "...at ${CLAUDE_PLUGIN_ROOT}/templates/monorepo/.") is stripped
-#    before resolving. Paths that are illustrative placeholders rather than
-#    literal targets (containing "<", ">", or an ellipsis, e.g.
-#    `${CLAUDE_PLUGIN_ROOT}/templates/<layer>/<name>`) are skipped.
+#    before resolving. The capture charset already excludes "<", ">", and
+#    ellipsis, so illustrative placeholders (e.g.
+#    `${CLAUDE_PLUGIN_ROOT}/templates/<layer>/<name>`) never match in the
+#    first place.
 CLAUDE_PLUGIN_ROOT_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_./-]+)")
-PLACEHOLDER_MARKERS = ("<", ">", "…")
 ROOT_REF_GLOBS = [
     os.path.join(PLUGIN, "skills", "**", "*.md"),
     os.path.join(PLUGIN, "shared", "**", "*.md"),
@@ -148,7 +148,7 @@ for pattern in ROOT_REF_GLOBS:
             continue
         for m in CLAUDE_PLUGIN_ROOT_RE.finditer(text):
             target = m.group(1).rstrip(".").rstrip("/")
-            if not target or any(c in target for c in PLACEHOLDER_MARKERS):
+            if not target:
                 continue
             key = (path, target)
             if key in seen_root_refs:
