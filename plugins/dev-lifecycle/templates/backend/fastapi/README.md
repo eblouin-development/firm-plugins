@@ -239,7 +239,16 @@ changing (same `BucketStore` Protocol). Set `RATE_LIMIT_TRUSTED_HOPS` to
 the exact number of trusted reverse proxies in front of this app, per
 environment, once that topology is confirmed — never guessed, and never
 left above 0 without confirming it (a wrong value lets a client spoof its
-own rate-limit key via a forged header).
+own rate-limit key via a forged header). `RateLimitMiddleware`'s
+`exempt_paths` is left unpassed in `create_app()`, so it resolves to the
+component's own `_DEFAULT_EXEMPT_PATHS` (`{"/health", "/readyz"}`) —
+exactly this app's `GET /health`/`GET /readyz` routes: a health/readiness
+probe must never share a client's bucket, or a TLS-terminating proxy at the
+safe default `trusted_hops=0` above could 429 its own health check under
+burst and mark this instance unhealthy, an outage the limiter itself would
+have caused (issue #42). See `rate_limiting/fastapi.py`'s
+`RateLimitMiddleware.exempt_paths` docstring for the full rationale and how
+a project opts back into rate-limiting these routes.
 
 **Secrets composition (`secret_store`).** Not middleware — a library
 `app/core/config.py`'s `Settings` composes directly, per the exact pattern
@@ -957,8 +966,12 @@ request/response behavior: security headers present on a normal response
 plain `http`); CORS preflight allowing a configured origin, rejecting a
 disallowed one, and not being wired at all when no origins are configured;
 rate limiting returning 429 with `Retry-After` once a tiny configured burst
-is exhausted, and that denial still carrying the outer middlewares' own
-headers (`X-Request-ID`, security headers); request-id binding proven
+against `/items` is exhausted, and that denial still carrying the outer
+middlewares' own headers (`X-Request-ID`, security headers); `/health` and
+`/readyz` never 429ing under that same tiny-capacity burst (issue #42's
+regression coverage), while `/items` still does under identical settings,
+proving the exemption is scoped rather than a global bypass; request-id
+binding proven
 directly against `RequestIDMiddleware` + `audit_event()` (a minted or
 reflected `X-Request-ID`, a malformed inbound id replaced rather than
 trusted, and the audit contextvar actually carrying the same id during the

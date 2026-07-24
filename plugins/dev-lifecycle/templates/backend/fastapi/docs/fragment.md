@@ -39,7 +39,10 @@ CORS is unwired entirely until set).
 security-headers (CSP/HSTS-when-https/nosniff/frame-deny on every
 response) -> request-id/audit binding (`X-Request-ID` minted or reflected,
 bound into `audit.py`'s contextvar) -> rate-limiting (per-client-IP token
-bucket, 429 + `Retry-After` on deny) -> CORS (Starlette's `CORSMiddleware`,
+bucket, 429 + `Retry-After` on deny; `/health`/`/readyz` are exempt by
+default — see rate_limiting/fastapi.py's `RateLimitMiddleware.exempt_paths`
+docstring for why a health/readiness probe must never share a client's
+bucket) -> CORS (Starlette's `CORSMiddleware`,
 deny-by-default — unwired entirely unless `CORS_ALLOWED_ORIGINS` is set,
 never a wildcard). `input_validation.StrictModel` is the base for
 `ItemCreate`/`ItemUpdate`/`ItemOut` (`app/schemas/item.py`) — unknown

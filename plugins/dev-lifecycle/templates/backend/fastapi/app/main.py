@@ -498,6 +498,19 @@ def create_app(*, lifespan_ctx=lifespan, settings: Settings | None = None) -> Fa
     # within one TTL window, the in-memory dict is capped rather than
     # growing unbounded — see InMemoryBucketStore's own docstring for the
     # oldest-by-last-seen eviction this triggers once the cap is hit.
+    #
+    # Issue #42: `exempt_paths` is left unpassed, so `RateLimitMiddleware`
+    # resolves it to its own `_DEFAULT_EXEMPT_PATHS` (`{"/health",
+    # "/readyz"}`) -- exactly this app's health.py routes (app/api/routers/
+    # health.py: `GET /health`, `GET /readyz`). Without this, a
+    # TLS-terminating proxy in front of this app at the safe default
+    # `trusted_hops=0` above puts every request (including the proxy's own
+    # health-check traffic) on ONE shared bucket keyed on the proxy's peer
+    # address -- an LB polling /health under burst could 429 its own health
+    # check and pull this instance from rotation, an outage the limiter
+    # itself would have caused. See RateLimitMiddleware.exempt_paths'
+    # docstring (rate_limiting/fastapi.py) for the full rationale and how to
+    # opt back into rate-limiting these routes (`exempt_paths=frozenset()`).
     app.add_middleware(
         RateLimitMiddleware,
         store=InMemoryBucketStore(max_keys=50_000),
