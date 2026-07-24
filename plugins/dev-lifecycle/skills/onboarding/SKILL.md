@@ -15,6 +15,7 @@ Take a repository that already exists and make it workable through the firm's pi
 - **Decide owned vs guest first, and be conservative.** If you can't confirm you own it (or you're working someone else's project), treat it as **guest**. When unsure, ask.
 - **Guest means invisible.** On a guest repo, Claude leaves no trace: config lives in untracked local files, work is authored as the user, and every commit/PR is scrubbed of AI attribution before it leaves the machine (see the guest workflow). This is a hard requirement, not a preference.
 - **Detect and conform.** Read the existing stack, conventions, and CI before changing or adding anything. Never impose the firm's structure on a repo that already has one.
+- **Intake only, no composing.** This skill wires the pipeline around the repo as it already is; it never composes the starter kit's blocks/components into it. Moving an owned repo's app code onto the kit is `modernization`'s job.
 - **Work context-efficiently.** Inventory from manifests/lockfiles, not by reading the tree. See `${CLAUDE_PLUGIN_ROOT}/shared/token-efficiency.md`.
 - **Fill the reference library eagerly.** Inventory the repo's significant direct dependencies; for any framework/library with no reference yet, generate one grounded in **current official docs** and open a PR to *your* plugin repo (this works in both modes — it touches your marketplace, never the onboarded repo). Skip transitive utilities without real idioms.
 
