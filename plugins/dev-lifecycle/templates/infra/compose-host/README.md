@@ -145,6 +145,12 @@ then prune old images (never volumes). **Rollback** is re-running either
 script with the previous `IMAGE_TAG` — the previous image is still on the
 host/registry until pruned past the 7-day window.
 
+Both scripts require **`API_IMAGE_REPO`** (the registry repo with no tag,
+e.g. `ghcr.io/org/app-api`) and **`IMAGE_TAG`** (the git SHA CI just built
+and pushed) as env vars — set as CI job env/secrets, not in the host's
+`.env` (see `.env.example`). Both fail fast (`:?`) if unset rather than
+deploying an empty/unintended image reference.
+
 ## Migrations on deploy
 
 Per `references/devops/deploy-operate.md`: migrations are an explicit,
@@ -170,11 +176,12 @@ doc's guidance made runnable:
   restores a dump into a scratch database on demand — **run it on a
   schedule, not just when disaster strikes**; an untested backup is a hope,
   not a backup.
-- **Monitoring/alerting.** Uptime Kuma ships on by default (compose
-  `profiles: ["monitoring"]`) watching the app's health endpoint and
-  Postgres reachability, with alert channels configured in its own UI on
-  first boot. This is intentionally basic — a project with an existing
-  observability stack (Sentry, Grafana) wires that in instead and can drop
+- **Monitoring/alerting.** Uptime Kuma ships on by default (no compose
+  profile gate — a plain `docker compose up -d` starts it) watching the
+  app's health endpoint and Postgres reachability, with alert channels
+  configured in its own UI on first boot. This is intentionally basic — a
+  project with an existing observability stack (Sentry, Grafana) wires
+  that in instead and can drop
   this service.
 - **Auto-recovery after reboot.** Every service in `docker-compose.prod.yml`
   sets `restart: unless-stopped`, so a host reboot (or a container crash)

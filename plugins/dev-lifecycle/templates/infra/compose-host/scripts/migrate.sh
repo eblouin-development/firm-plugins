@@ -14,14 +14,21 @@ IMAGE="${1:?usage: migrate.sh <api-image-ref>}"
 COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "==> Running migrations via a one-off container from ${IMAGE}"
-# --env-file reads the same DATABASE_URL the real `api` service will use;
-# --network attaches to the compose project's `internal` network so `db`
-# resolves by service name. Adjust the migrate command for the project's
-# backend track (alembic for FastAPI, manage.py for Django).
-docker run --rm \
+# `docker compose run` (not a raw `docker run` with a hand-derived network
+# name) so the one-off container joins the SAME `internal` network Compose
+# itself resolves the project to — correct even when COMPOSE_PROJECT_NAME
+# or `docker compose -p <name>` overrides the default project-name-derived
+# network name. --no-deps: don't also (re)start db/caddy/etc; --entrypoint
+# sh: bypass the image's normal CMD to run the migrate command instead.
+# API_IMAGE is set to the new image so this uses IT, not whatever's already
+# rolled out. Adjust the migrate command for the project's backend track
+# (alembic for FastAPI, manage.py for Django) — the fallback below only
+# fires when `alembic` itself isn't on PATH (a Django image), not on an
+# actual alembic failure, so a real migration error surfaces instead of
+# being masked by a silent fallback attempt.
+API_IMAGE="${IMAGE}" docker compose -f "${COMPOSE_DIR}/docker-compose.prod.yml" \
   --env-file "${COMPOSE_DIR}/.env" \
-  --network "$(basename "${COMPOSE_DIR}")_internal" \
-  "${IMAGE}" \
-  sh -c 'alembic upgrade head || python manage.py migrate'
+  run --rm --no-deps --entrypoint sh api \
+  -c 'if command -v alembic >/dev/null 2>&1; then alembic upgrade head; else python manage.py migrate; fi'
 
 echo "==> Migrations applied."

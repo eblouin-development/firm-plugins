@@ -18,6 +18,7 @@ SSH_HOST="${SSH_HOST:?set SSH_HOST (e.g. a MagicDNS name, or a public VPS hostna
 SSH_USER="${SSH_USER:?set SSH_USER}"
 REMOTE_DIR="${REMOTE_DIR:?set REMOTE_DIR — the compose projects path on the host}"
 IMAGE_TAG="${IMAGE_TAG:?set IMAGE_TAG to the git SHA that was just built + pushed}"
+API_IMAGE_REPO="${API_IMAGE_REPO:?set API_IMAGE_REPO to the registry repo, e.g. ghcr.io/org/app-api}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 
 echo "==> Syncing compose files to ${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}"

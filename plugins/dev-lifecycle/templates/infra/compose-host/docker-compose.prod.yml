@@ -111,13 +111,12 @@ services:
       - internal
 
   # --- Basic monitoring: uptime + alerting on the key services -------------
-  # Optional (compose profile), but on by default for a fresh deploy —
-  # home-infra.md "Monitoring". Disable with `--profile monitoring` omitted,
-  # or point it at an external status page instead.
+  # On by default (no profile gate) — home-infra.md "Monitoring" names this
+  # as part of the ops posture, not an opt-in. A project with an existing
+  # observability stack (Sentry, Grafana) removes this service instead.
   uptime-kuma:
     image: louislam/uptime-kuma:1
     restart: unless-stopped
-    profiles: ["monitoring"]
     volumes:
       - uptime-kuma-data:/app/data
     networks:

@@ -10,12 +10,12 @@ DUMP="${1:?usage: restore.sh <dump.sql.gz> [scratch-db-name]}"
 SCRATCH_DB="${2:-restore_check}"
 
 echo "==> creating scratch database ${SCRATCH_DB}"
-docker compose exec -T db psql -U "${POSTGRES_USER}" -d postgres \
+docker compose -f docker-compose.prod.yml exec -T db psql -U "${POSTGRES_USER}" -d postgres \
   -c "DROP DATABASE IF EXISTS ${SCRATCH_DB};" \
   -c "CREATE DATABASE ${SCRATCH_DB};"
 
 echo "==> restoring ${DUMP} into ${SCRATCH_DB}"
-gunzip -c "${DUMP}" | docker compose exec -T db psql -U "${POSTGRES_USER}" -d "${SCRATCH_DB}"
+gunzip -c "${DUMP}" | docker compose -f docker-compose.prod.yml exec -T db psql -U "${POSTGRES_USER}" -d "${SCRATCH_DB}"
 
 echo "==> restore check passed: ${DUMP} is restorable."
 echo "    (scratch DB '${SCRATCH_DB}' left in place for inspection — drop it manually when done)"

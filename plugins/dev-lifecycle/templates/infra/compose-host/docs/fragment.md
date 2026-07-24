@@ -57,9 +57,11 @@ Encrypt). For a Tailscale Serve/Funnel deploy instead, layer
   systemd watchdog, `kernel.panic`, `tailscaled` enablement, and
   unattended-upgrades; BIOS power-loss auto-boot and Wake-on-LAN are called
   out as manual, software-can't-set steps.
-- **Monitoring**: Uptime Kuma (`docker compose --profile monitoring up -d`)
-  watches the app's health endpoint and Postgres reachability — configure
-  alert channels in its own UI on first boot.
+- **Monitoring**: Uptime Kuma starts on by default with `docker compose up
+  -d` (no profile flag needed) and watches the app's health endpoint and
+  Postgres reachability — configure alert channels in its own UI on first
+  boot. Drop the `uptime-kuma` service from `docker-compose.prod.yml` if
+  the project already has an observability stack.
 - **Updates & patching**: `unattended-upgrades` (or the distro equivalent)
   for the host OS; re-pull base images (`postgres:18-bookworm`,
   `caddy:2.11-alpine`) on a cadence and redeploy to pick up patches.

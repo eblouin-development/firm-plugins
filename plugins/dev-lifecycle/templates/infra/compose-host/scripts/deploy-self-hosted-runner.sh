@@ -17,6 +17,7 @@ set -euo pipefail
 
 COMPOSE_DIR="${COMPOSE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 IMAGE_TAG="${IMAGE_TAG:?set IMAGE_TAG to the git SHA that was just built + pushed}"
+API_IMAGE_REPO="${API_IMAGE_REPO:?set API_IMAGE_REPO to the registry repo, e.g. ghcr.io/org/app-api}"
 COMPOSE_FILES=(-f "${COMPOSE_DIR}/docker-compose.prod.yml")
 [ "${USE_TAILSCALE_OVERLAY:-0}" = "1" ] && COMPOSE_FILES+=(-f "${COMPOSE_DIR}/docker-compose.tailscale.yml")
 
