@@ -48,6 +48,7 @@ from app.core.security.auth import (
     AccountService,
     AttemptRecord,
     ConsoleEmailSender,
+    EmailAlreadyExists,
     EmailMessage,
     EmailSender,
     LockoutPolicy,

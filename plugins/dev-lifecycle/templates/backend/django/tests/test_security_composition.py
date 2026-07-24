@@ -32,6 +32,7 @@ each time)."""
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from rest_framework.test import APIClient
@@ -257,17 +258,34 @@ def test_conn_health_checks_enabled_in_the_real_settings_module() -> None:
     thread-sensitive-executor bridge (see that module's own comment, and
     the README's "Database & migrations" -> "Operational note" section).
 
-    Imports `config.settings` directly (NOT `config.settings_test`, this
-    test run's actual `DJANGO_SETTINGS_MODULE`) because `settings_test.py`
-    overrides `DATABASES` wholesale with a plain sqlite3 dict AFTER `from
-    config.settings import *` (see that module's own docstring) -- so
-    `django.conf.settings.DATABASES` as observed through the normal Django
-    settings object would never show this key during a hermetic test run,
-    even though `config/settings.py` itself does set it. `config.settings`
-    is already imported as a real module by the time any Django test runs
-    (transitively, via `settings_test.py`'s own `import *`), so this is
-    inspecting the same already-loaded module object, not re-executing it
-    or fighting Django's one-settings-module-per-process constraint."""
-    import config.settings as real_settings
+    Asserted at the SOURCE level, not by inspecting a constructed
+    `DATABASES` dict, for two independent reasons this test run can't work
+    around by simply importing `config.settings` and reading its
+    `DATABASES`: (1) `config.settings_test.py` (this test run's actual
+    `DJANGO_SETTINGS_MODULE`) overrides `DATABASES` wholesale with a plain
+    sqlite3 dict AFTER `from config.settings import *`, so the live
+    `django.conf.settings`/even a freshly re-imported `config.settings`
+    module attribute would only reflect whatever `DATABASE_URL` happens to
+    be set to at import time; and (2) `dj_database_url.parse()`'s own
+    `sqlite://:memory:` special case (`settings_test.py`'s placeholder
+    `DATABASE_URL`) returns `{"ENGINE": ..., "NAME": ":memory:"}` early,
+    BEFORE applying `conn_max_age`/`conn_health_checks`/any other kwarg at
+    all — so even a real Postgres-shaped `DATABASE_URL` swapped in for this
+    one call wouldn't prove anything about what a production URL gets,
+    without also faking a full postgres:// URL and monkeypatching env vars
+    around a reload. Reading the actual `dj_database_url.config(...)` call
+    directly from source is simpler and exercises exactly what a real
+    (non-sqlite) `DATABASE_URL` in production will receive."""
+    settings_path = Path(__file__).resolve().parent.parent / "config" / "settings.py"
+    source = settings_path.read_text()
 
-    assert real_settings.DATABASES["default"]["CONN_HEALTH_CHECKS"] is True
+    conn_health_checks_position = source.index("conn_health_checks=True")
+    conn_max_age_position = source.index("conn_max_age=600")
+    ssl_require_position = source.index("ssl_require=False")
+    dj_database_url_config_position = source.index("dj_database_url.config(")
+
+    # All three kwargs belong to the SAME `dj_database_url.config(...)`
+    # call in `DATABASES` -- i.e. `conn_health_checks=True` isn't set
+    # somewhere unrelated in this module, it's the same call `conn_max_age`
+    # and `ssl_require` (the two kwargs that call already had) are on.
+    assert dj_database_url_config_position < conn_max_age_position < conn_health_checks_position < ssl_require_position
