@@ -1,7 +1,7 @@
 <!--
 scope: cross-stack starter kit
-versions-covered: "Stage 0 kit-wide pin set, 2026-07; Stage 2 security-tooling pin set, 2026-07; Stage 4 psycopg row, 2026-07; Stage 4 Step 3 django-cors-headers row, 2026-07; Stage 4 Step 4 Containers rows now also cite backend/django, 2026-07; Stage 6 Frontend/web + Frontend testing rows for the Vite SPA / @repo/web-shared stack, 2026-07; Stage 8 Mobile rows, 2026-07; Stage 7 Next.js @tailwindcss/postcss row, 2026-07; Stage 13 Editor (WYSIWYG) TipTap rows, 2026-07; Stage 13d nh3 row, 2026-07; issue #100 worker/celery block — Celery/redis-py/django-celery-beat + Data/Containers Redis rows, 2026-07; issue #101 infra/compose-host block — Infra Docker Compose v2 + Caddy rows, Containers Caddy/Tailscale image rows, 2026-07"
 last-verified: 2026-07-24
+versions-covered: "Stage 0 kit-wide pin set, 2026-07; Stage 2 security-tooling pin set, 2026-07; Stage 4 psycopg row, 2026-07; Stage 4 Step 3 django-cors-headers row, 2026-07; Stage 4 Step 4 Containers rows now also cite backend/django, 2026-07; Stage 6 Frontend/web + Frontend testing rows for the Vite SPA / @repo/web-shared stack, 2026-07; Stage 8 Mobile rows, 2026-07; Stage 7 Next.js @tailwindcss/postcss row, 2026-07; Stage 13 Editor (WYSIWYG) TipTap rows, 2026-07; Stage 13d nh3 row, 2026-07; issue #100 worker/celery block — Celery/redis-py/django-celery-beat + Data/Containers Redis rows, 2026-07; issue #101 infra/compose-host block — Infra Docker Compose v2 + Caddy rows, Containers Caddy/Tailscale image rows, 2026-07; issue #102 htmx/Tailwind-CLI block — Frontend server-rendered (Django + HTMX) rows, 2026-07"
 provenance: manual
 sources:
   - https://www.npmjs.com/package/vite
@@ -32,6 +32,9 @@ sources:
   - https://github.com/hashicorp/terraform/releases
   - https://registry.terraform.io/providers/hashicorp/aws/latest
   - https://hub.docker.com/_/python
+  - https://www.npmjs.com/package/htmx.org
+  - https://github.com/bigskysoftware/htmx/releases
+  - https://github.com/tailwindlabs/tailwindcss/releases
   - https://hub.docker.com/_/node
   - https://www.npmjs.com/package/orval
   - https://www.npmjs.com/package/@tanstack/react-query
@@ -127,6 +130,12 @@ Re-verify against official release notes/registries before bumping any line — 
 | drf-spectacular | **0.30.x** | OpenAPI 3 schema generation for DRF; current stable, keep in lockstep with DRF. |
 | psycopg | **3.3.x** (3.3.4), `[binary]` extra | Postgres driver for the Django track. Current stable (PyPI, verified for Stage 4 #27); Django 5.2's `django.db.backends.postgresql` engine auto-detects psycopg2 or psycopg (v3) and Django 5.2 prefers psycopg 3 — see Django 5.2 release notes' "Database backend API" note. The `[binary]` extra ships a self-contained wheel with no local libpq headers/C toolchain needed to install, matching this kit's "no surprise system deps" posture for `uv sync`. Added by Stage 4 Step 1 (#27), the first block on this track to need a real Postgres driver. |
 | django-cors-headers | **4.9.x** (4.9.0) | Current stable (PyPI, released Sep 18 2025 — verified via `pypi.org/pypi/django-cors-headers/json`, `info.version`). The Django-ecosystem convention for CORS; `core/security/cors_lockdown/django.py` (Stage 4 Step 3, #27) emits this package's settings from `CORSPolicy` but never imports it directly — the Django block itself installs it and puts `"corsheaders"` in `INSTALLED_APPS` + `corsheaders.middleware.CorsMiddleware` in `MIDDLEWARE`. Supports Django 4.2–6.0 per its own PyPI classifiers, comfortably covering this matrix's Django 5.2 LTS pin above. |
+
+## Frontend — server-rendered (Django + HTMX)
+| Dep | Pinned line | Why this line |
+| --- | --- | --- |
+| htmx | **2.x** (2.0.10) | Current stable (npm `htmx.org`, last published ~3 months before this pin — verified Jul 2026). v4 exists only as a beta (`4.0.0-beta5`, Jun 2026) targeting a Summer '26 GA — not adopted here. Vendored as a single static `htmx.min.js` file (`templates/frontend/django-htmx/`'s own static dir) served by Django's `staticfiles`, matching `references/frontend/htmx.md`'s "no Node toolchain requirement" framing — no npm/pnpm install for this block at all. |
+| Tailwind CSS (standalone CLI) | **4.x** (4.3.3) | Kept in lockstep with the Vite/Next.js blocks' own `tailwindcss` pin above (same 4.3.3 release train) — one Tailwind version kit-wide, different distribution mechanism. The standalone CLI is a prebuilt, dependency-free binary published for every `tailwindcss` GitHub release tag (`tailwindcss-<platform>` on the `v4.3.3` release) — no `package.json`/npm/Node required to build CSS, the CLI compiles `input.css` (`@import "tailwindcss";`) straight to a static `output.css` Django's `staticfiles` then serves, per this block's own README ("Tailwind (standalone CLI)"). |
 
 ## Frontend / web
 | Dep | Pinned line | Why this line |

@@ -1,0 +1,42 @@
+[project]
+name = "django-htmx-block"
+version = "0.1.0"
+description = "frontend/django-htmx: the server-rendered + HTMX overlay for backend/django's apps/api."
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  # This block adds NO new Python dependencies beyond what backend/django
+  # already pins (references/compatibility-matrix.md's "Backend — Django
+  # track" — django, djangorestframework, etc.) — see README.md's
+  # "Composition contract". This section is empty by design; a real
+  # scaffolded project installs this block's Python code as part of
+  # backend/django's own apps/api/ dependency set, not a second one.
+]
+
+[dependency-groups]
+dev = [
+  # Mirrors backend/django/pyproject.toml's own dev group (same pins,
+  # references/compatibility-matrix.md's Backend — Python row) — needed
+  # for a STANDALONE test run of just this block (see tests/conftest.py's
+  # own docstring on why this run needs backend/django's core/ on
+  # sys.path rather than a second copy of anything).
+  "pytest==9.1.*",
+  "pytest-django==4.12.*",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["webapp"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings_test"
+testpaths = ["tests"]
+# Puts backend/django's own project root (the SIBLING template directory
+# this block's `core.*`/`config.*` imports need — see tests/conftest.py's
+# module docstring) onto sys.path BEFORE settings/test collection, using
+# pytest's own built-in `pythonpath` ini option (pytest >= 7) rather than
+# relying solely on the conftest.py-time sys.path insertion (kept too, as
+# a belt-and-braces fallback for older pytest versions — see that file).
+pythonpath = [".", "../../backend/django"]
