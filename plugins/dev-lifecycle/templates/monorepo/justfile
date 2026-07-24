@@ -30,24 +30,40 @@ install:
 
 # Run every package's dev script in parallel (no-op on an empty workspace),
 # AND boot a Python API app's dev stack (Docker Compose: the app + its own
-# Postgres) alongside it if one has been scaffolded in. Gated on
-# `apps/api/docker-compose.yml` existing — a JS-only project (no Python
-# app materialized) never sees `docker compose` invoked at all, matching
-# the pnpm side's own `--if-present` no-op-when-absent behavior. The
-# `trap` tears the compose stack down on exit (including Ctrl+C stopping
-# the pnpm dev servers) so `just dev` never leaves orphaned containers
-# running after the recipe itself has stopped.
+# Postgres) alongside it if one has been scaffolded in, AND boot the
+# worker/celery block's own dev stack (worker + beat + Redis) if THAT has
+# been scaffolded in too. Each is independently gated on its own
+# docker-compose.yml existing — a JS-only project (no Python app
+# materialized) never sees `docker compose` invoked at all, matching the
+# pnpm side's own `--if-present` no-op-when-absent behavior; a project
+# with a backend but no worker block boots only the API stack, same as
+# before this target learned about apps/worker/. `cleanup` tears down
+# whichever compose stacks actually started on exit (including Ctrl+C
+# stopping the pnpm dev servers) so `just dev` never leaves orphaned
+# containers running after the recipe itself has stopped.
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
+    pids=()
+    cleanup() {
+        for d in apps/api apps/worker; do
+            if [ -f "$d/docker-compose.yml" ]; then
+                (cd "$d" && docker compose down) >/dev/null 2>&1 || true
+            fi
+        done
+    }
+    trap cleanup EXIT
     if [ -f apps/api/docker-compose.yml ]; then
         (cd apps/api && docker compose up --build) &
-        compose_pid=$!
-        trap '(cd apps/api && docker compose down) >/dev/null 2>&1 || true' EXIT
+        pids+=($!)
+    fi
+    if [ -f apps/worker/docker-compose.yml ]; then
+        (cd apps/worker && docker compose up --build) &
+        pids+=($!)
     fi
     pnpm -r --if-present --parallel run dev
-    if [ -f apps/api/docker-compose.yml ]; then
-        wait "$compose_pid"
+    if [ ${#pids[@]} -gt 0 ]; then
+        wait "${pids[@]}"
     fi
 
 # Run every package's test script (no-op on an empty workspace).

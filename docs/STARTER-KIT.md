@@ -22,7 +22,7 @@ The full model — the doc fragment format, the root README's aggregation-marker
 
 ## 3. Blocks
 
-Each block lives at `plugins/dev-lifecycle/templates/<layer>/<name>/` and declares a `needs`/`exposes` composition contract in its own `README.md` header. Backend blocks are alternatives (a project picks one); frontend/mobile/infra blocks compose alongside each other.
+Each block lives at `plugins/dev-lifecycle/templates/<layer>/<name>/` and declares a `needs`/`exposes` composition contract in its own `README.md` header. Backend blocks are alternatives (a project picks one); frontend/mobile/infra/worker blocks compose alongside each other and alongside whichever backend was chosen.
 
 | Block | Materializes to | Needs (short) | Exposes (short) |
 |---|---|---|---|
@@ -32,6 +32,7 @@ Each block lives at `plugins/dev-lifecycle/templates/<layer>/<name>/` and declar
 | `frontend/nextjs` | `apps/web` | Same as `vite-spa`, `NEXT_PUBLIC_API_BASE_URL` in place of the Vite env var | The Next.js App Router app (`.next/standalone` + statically-rendered public routes) |
 | `frontend/nextjs-admin` | `apps/admin` | `@repo/api-client` + `@repo/web-shared`, the backend's `admin` role/claim, identical deps to `frontend/nextjs` | `apps/admin` — a SECOND, standalone Next.js app whole-app-gated on `admin`, its own container/subdomain |
 | `mobile/expo` | `apps/mobile` | `EXPO_PUBLIC_API_BASE_URL`, `@repo/api-client` in bearer mode, `expo-secure-store` | An Expo Router React Native app wired to the standard `justfile` targets |
+| `worker/celery` | `apps/worker` | A backend block already in `apps/api`, `DATABASE_URL` (shared with it), `CELERY_BROKER_URL` (Redis) | The Celery app, idempotent/retryable task conventions, a beat scheduler, and the `enqueue()`/`TaskName` seam either backend block copies in to dispatch work |
 | `infra/aws-fargate` | `infra/aws-fargate` | A built + pushed app image, AWS OIDC credentials, ACM cert ARN(s), Terraform ~>1.15 | ECS Fargate service behind an HTTPS ALB, CloudFront static site, private RDS Postgres, Secrets Manager, a least-privilege OIDC deploy role |
 | `packages/api-client` | `packages/api-client` | An OpenAPI 3.1 schema to generate from; consumers supply `react` + `@tanstack/react-query` as peers | `@repo/api-client` — typed React Query hooks/models (orval-generated) |
 
@@ -80,7 +81,7 @@ Thirteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_
 |---|---|
 | `analytics.md` | A new `AnalyticsSink` seam (mirroring `EmailSender`) for server-side event capture, a minimal typed event taxonomy, and a consent-gated, privacy-respecting web-analytics default across nextjs/vite-spa/expo and fastapi/django |
 | `audit-logging.md` | The `audit-logging` component into a feature's auth/admin/restricted-data actions |
-| `background-jobs.md` | Celery + Redis (Django) or `BackgroundTasks` (FastAPI, light fire-and-forget) for async work off the request path |
+| `background-jobs.md` | The `worker/celery` block (either backend track) for retryable/scheduled/durable async work, plus `BackgroundTasks` (FastAPI, light fire-and-forget) for work that can afford to be lost |
 | `caching.md` | Redis cache-aside — read-through, explicit TTL, write invalidation, leak-safe key naming |
 | `data-export.md` | A streamed CSV/report export endpoint reusing an existing list endpoint's query and authorization scoping |
 | `end-to-end-auth.md` | The `auth` component across backend (fastapi/django), web (cookie mode), and mobile (bearer mode) into one contract |
