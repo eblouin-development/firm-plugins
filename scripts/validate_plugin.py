@@ -262,6 +262,10 @@ for path in sorted(glob.glob(os.path.join(PLUGIN, "assets", "workflows", "*.yml"
             "('secrets: inherit') so CLAUDE_CODE_OAUTH_TOKEN reaches it")
     if "owner" not in (caller.get("with") or {}):
         err(f"{rel}: the reusable-workflow call must pass the 'owner' input")
+    if "repo" not in (caller.get("with") or {}):
+        err(f"{rel}: the reusable-workflow call must pass the 'repo' input "
+            "(the marketplace repo name — a literal like 'eblouin-plugins' "
+            "assumed constant breaks under a fork or rename)")
 
 # report
 for w in warnings:

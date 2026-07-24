@@ -44,6 +44,10 @@ on:
         description: "Firm/marketplace owner handle — used in the plugin marketplace URL and the @owner routing ping."
         required: true
         type: string
+      repo:
+        description: "Marketplace repo name (e.g. 'eblouin-plugins') — used in the plugin marketplace URL and plugin identifier. A literal name assumed constant breaks under a fork/rename, so it's threaded through as an input instead."
+        required: true
+        type: string
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: "Claude subscription OAuth token. Pass via `secrets: inherit`."
@@ -65,9 +69,9 @@ jobs:
           allowed_bots: "claude"
           # plugin_marketplaces takes full git URLs, not owner/repo shorthand.
           plugin_marketplaces: |
-            https://github.com/${{ inputs.owner }}/eblouin-plugins.git
+            https://github.com/${{ inputs.owner }}/${{ inputs.repo }}.git
           plugins: |
-            dev-lifecycle@eblouin-plugins
+            dev-lifecycle@${{ inputs.repo }}
           prompt: |
             Use the dev-lifecycle plugin's code-review skill to review this pull
             request against the firm's definition-of-done. The plugin is loaded
@@ -114,4 +118,4 @@ jobs:
           # via gh) and the read/search tools.
           claude_args: |
             --allowedTools "Bash,Read,Glob,Grep,TodoWrite"
-            --system-prompt "This repository is built by the development firm. The dev-lifecycle plugin (dev-lifecycle@eblouin-plugins) is loaded and its skills are available. Use them, and hold the change to the firm definition-of-done."
+            --system-prompt "This repository is built by the development firm. The dev-lifecycle plugin (dev-lifecycle@${{ inputs.repo }}) is loaded and its skills are available. Use them, and hold the change to the firm definition-of-done."
