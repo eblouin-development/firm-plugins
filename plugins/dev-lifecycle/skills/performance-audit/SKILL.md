@@ -74,5 +74,6 @@ The report stands delivered; share the umbrella and finding-issue links, the sin
 - File issues before the user has seen the report and confirmed.
 - Tag `@claude` on finding issues — the user controls build kickoff.
 - Replace the `code-review` performance dimension (per-diff, every PR) or `debugging` (root-causing one already-observed slow case).
+- Replace `security-audit` — that skill assesses security posture (vulnerabilities, attack surface); this one assesses performance posture (speed, capacity). A surface that's both slow and insecure (e.g. an unbounded endpoint that's also a DoS vector) gets a performance finding here and a security finding there, filed independently.
 - Own SEO ranking or crawlability — Core Web Vitals findings note the overlap and point to the `seo` skill by name; this audit's lane is user-experience and rendering performance.
 - Present a load-test number as a guaranteed ceiling rather than an environment-specific estimate, or manufacture findings to look thorough.

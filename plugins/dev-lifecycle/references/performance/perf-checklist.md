@@ -24,7 +24,7 @@ Audit every enumerated surface against these checks. Only flag issues with a mea
 
 - **Bundle size** — total and per-route JS/CSS shipped, from a bundler analyzer (`webpack-bundle-analyzer`, `vite-bundle-visualizer`, `source-map-explorer`) or the build output's own size report. Flag the largest contributors, not just the total.
 - **Code splitting** — routes/heavy components (charting, editors, PDF viewers) loaded eagerly in the main bundle when they could be dynamically imported.
-- **Core Web Vitals** (lab data — see the load-testing reference for how to gather it without a live user base):
+- **Core Web Vitals** (lab data — see the performance-audit skill's workflow step 4 for how to gather it):
   - **LCP** (largest contentful paint) — target under 2.5s. Common causes: render-blocking resources, slow server response, unoptimized hero image/font.
   - **CLS** (cumulative layout shift) — target under 0.1. Common causes: images/embeds without reserved dimensions, web fonts causing reflow, content injected above existing content.
   - **INP** (interaction to next paint) — target under 200ms. Common causes: long tasks blocking the main thread, expensive event handlers, large re-renders on interaction.
