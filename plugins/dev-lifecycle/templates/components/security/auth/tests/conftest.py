@@ -44,6 +44,7 @@ def _load(module_name: str, filename: str) -> ModuleType:
 
 core = _load("_core", "_core.py")
 cookies = _load("_cookies", "_cookies.py")
+oauth = _load("_oauth", "_oauth.py")
 fastapi_adapter = _load("auth_fastapi_adapter", "fastapi.py")
 django_adapter = _load("auth_django_adapter", "django.py")
 
@@ -56,6 +57,11 @@ def core_mod() -> ModuleType:
 @pytest.fixture(scope="session")
 def cookies_mod() -> ModuleType:
     return cookies
+
+
+@pytest.fixture(scope="session")
+def oauth_mod() -> ModuleType:
+    return oauth
 
 
 @pytest.fixture(scope="session")
@@ -369,6 +375,31 @@ def email_sender() -> FakeEmailSender:
 @pytest.fixture
 def event_sink() -> FakeAuthEventSink:
     return FakeAuthEventSink()
+
+
+class FakeOAuthAccountStore:
+    """In-memory `OAuthAccountStore` -- a dict keyed by `(provider,
+    subject)`, enforcing the natural-key uniqueness a real schema would
+    via a `UNIQUE(provider, subject)` constraint."""
+
+    def __init__(self) -> None:
+        self._by_key: dict[tuple[str, str], "oauth.OAuthLinkedAccountRecord"] = {}
+
+    async def get_by_provider_subject(self, provider, subject):
+        return self._by_key.get((provider, subject))
+
+    async def link(self, record):
+        self._by_key[(record.provider, record.subject)] = record
+
+
+@pytest.fixture
+def oauth_account_store() -> FakeOAuthAccountStore:
+    return FakeOAuthAccountStore()
+
+
+@pytest.fixture
+def oauth_service(user_store, oauth_account_store, password_service, auth_service, clock):
+    return oauth.OAuthAccountService(user_store, oauth_account_store, password_service, auth_service, clock)
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 <!--
 block: components/security/auth  # catalog component
-last-verified: 2026-07-23
+last-verified: 2026-07-24
 provenance: manual
 versions-pinned-to: references/compatibility-matrix.md
 needs:
@@ -17,6 +17,10 @@ exposes:
   - CsrfValidationError, REFRESH_COOKIE_NAME, CSRF_COOKIE_NAME, generate_csrf_token, verify_double_submit, build_refresh_cookie_kwargs, build_csrf_cookie_kwargs, clear_refresh_cookie_kwargs, clear_csrf_cookie_kwargs -- the framework-neutral double-submit-cookie CSRF transport, in _cookies.py (Stage 5d, #46)
   - set_auth_cookies, clear_auth_cookies, read_refresh_cookie, enforce_csrf -- thin cookie/CSRF glue over _cookies.py, in BOTH fastapi.py and django.py (Stage 5d, #46); django.py's stays rest_framework-free like the rest of that file
   - AccountService (request_email_verification, verify_email, request_password_reset, reset_password) -- email verification + password reset, composed ALONGSIDE AuthService, not a subclass -- in _core.py (Stage 5c, #45)
+  - AuthService.issue_session(user) -- mints a session for an ALREADY-authenticated principal (no password check), the seam OAuthAccountService.complete_login mints through -- added to _core.py (social-login recipe, #96)
+  - PKCEPair / generate_pkce_pair, generate_state / generate_nonce, verify_state / verify_nonce, OAuthProviderConfig, build_authorization_url, OAuthAuthorizationRequest / start_authorization -- OAuth 2.0/OIDC authorization-code + PKCE core, framework-neutral, stdlib-only -- in _oauth.py (social-login recipe, #96)
+  - OAuthIdentity, OAuthLinkedAccountRecord, OAuthAccountStore (Protocol), OAuthAccountService (resolve_or_link, complete_login) -- the social-login account-linking orchestrator, including the unverified-email-attack defense -- in _oauth.py (social-login recipe, #96)
+  - OAuthStateMismatch, OAuthNonceMismatch, UnverifiedEmailAccountConflict -- the AuthError subclasses _oauth.py raises, each documenting its ErrorCode mapping -- in _oauth.py (social-login recipe, #96)
   - SingleUseTokenService (issue, consume) / SingleUseTokenStore (Protocol) / SingleUseTokenRecord -- the hashed, single-use verify/reset token seam AccountService runs against
   - LockoutPolicy (is_locked, record_failure, clear) / LockoutStore (Protocol) / AttemptRecord -- per-account failed-login lockout, optionally shared between AuthService.login and AccountService.reset_password
   - EmailSender (Protocol) / EmailMessage / ConsoleEmailSender -- the email-delivery seam AccountService sends verify/reset links through; ConsoleEmailSender is DEV-ONLY (logs the raw token instead of delivering it)
@@ -90,6 +94,7 @@ which import and exercise both completely standalone.
 - The refresh-rotation state machine (the security-critical core)
 - Account lifecycle: email verification, password reset, lockout (Stage 5c, #45)
 - Cookie/CSRF transport: double-submit cookies (Stage 5d, #46)
+- OAuth 2.0/OIDC social login: PKCE, account linking, the unverified-email defense (`#96`)
 - Exception hierarchy → ErrorCode mapping (for the framework adapter)
 - Testing
 - Judgment calls
@@ -440,6 +445,72 @@ must be called ONLY from the cookie-authenticated path, never from the
 bearer-token path (`build_get_current_principal`/`resolve_principal`),
 which has no CSRF exposure to begin with.
 
+## OAuth 2.0/OIDC social login: PKCE, account linking, the unverified-email defense (`#96`)
+
+`_oauth.py` (a THIRD framework-neutral file alongside `_core.py`/
+`_cookies.py`, same "additive, standalone-importable, zero framework
+import" posture) adds the authorization-code + PKCE flow for federated
+login (Google, GitHub, Apple), wired by `references/recipes/
+social-login.md`. It does NOT invent a fourth session/token shape: the
+sole way it produces a session is `_core.py`'s new `AuthService.
+issue_session(user)` (added alongside this file, minimal and additive —
+`login`/`refresh`/`logout`/`resolve_access`/`_mint_and_persist` are
+untouched), so a federated login issues the byte-for-byte identical
+access/refresh JWT shape, cookie or bearer transport, and refresh-rotation
+state machine a password login does.
+
+**PKCE is mandatory for every provider, never optional** — `S256` only
+(no `plain` method), per current OAuth 2.0 Security BCP (RFC 9700)
+guidance to require it for every client type. **State and nonce are
+always generated and checked** — `state` defends the redirect against
+login CSRF, `nonce` (for Google/Apple's `id_token`) binds the token to
+this exact authorization request. None of `state`, `nonce`, or the PKCE
+`code_verifier` is ever placed in a URL query string that survives past
+the authorization redirect, and neither the resulting access/refresh
+token pair nor any OAuth credential is ever written to `localStorage` —
+they inherit the SAME in-memory-access-token / `HttpOnly`-cookie-or-
+SecureStore-refresh-token posture `end-to-end-auth` already establishes.
+
+**The account-linking rules — and the unverified-email attack they
+close.** `OAuthAccountService.resolve_or_link` resolves a verified
+`OAuthIdentity` to a local `UserRecord` in this order: (1) an existing
+`(provider, subject)` link, if one exists, wins outright — no email
+re-check; (2) otherwise, an email match against an existing `UserStore`
+row is auto-linked **only if both** the incoming identity's email AND the
+existing account's own email are independently verified — if either is
+not, `UnverifiedEmailAccountConflict` is raised instead of guessing; (3)
+otherwise, a brand-new account is created. See `UnverifiedEmailAccountConflict`'s
+own docstring in `_oauth.py` for the two symmetric attack shapes this
+refusal closes (an attacker's unverified-email OAuth identity claiming a
+victim's real account; an attacker's unverified local pre-registration of
+a victim's email later hit by the victim's own genuinely-verified OAuth
+login) — this is `references/security/secure-baseline.md`'s
+"Authentication & authorization" section applied to the specific hazard
+federated identity introduces that a password-only flow never has to.
+
+**What is deliberately NOT in this file** (app-level, same split
+`EmailSender`/`ConsoleEmailSender` already establishes for outbound
+email): the actual HTTP calls — exchanging an authorization `code` for
+tokens at a provider's token endpoint, fetching/verifying an OIDC
+`id_token`'s signature against the provider's JWKS (Google/Apple, via
+PyJWT's `PyJWKClient` — already a dependency via `TokenService`, no new
+library) — and GitHub's plain-OAuth2 `GET /user` + `GET /user/emails`
+calls to derive `email`/`email_verified` (taking ONLY the `primary &&
+verified` entry). `references/recipes/social-login.md` shows the concrete
+calls; `_oauth.py` starts one step later, at an already-verified
+`OAuthIdentity`.
+
+**Apple's two documented quirks**, both surfaced on `OAuthProviderConfig`/
+`OAuthIdentity` rather than hidden: `response_mode="form_post"` — Apple
+POSTs its callback body instead of a query-string redirect, so a route
+wiring Apple's callback must accept a form body, not `request.query_params`;
+and `OAuthIdentity.name`, which Apple returns **only on a user's very
+first-ever grant to this app** — never again on subsequent logins, even if
+the user later changes their Apple ID name. `resolve_or_link` never
+overwrites an already-known name with a later `None`; the app-level
+`UserStore.create`/`update` call the recipe describes is what actually
+persists it on that first grant.
+
 ## Exception hierarchy → ErrorCode mapping (for the framework adapter)
 
 This module raises its OWN exceptions rather than importing
@@ -456,6 +527,9 @@ adapter's exception handler maps each one onto that LOCKED, closed enum
 | `EmailAlreadyExists` | `conflict` | 409 |
 | `InvalidSingleUseToken` | `unauthenticated` | 401 (same generic shape — see "Account lifecycle" above) |
 | `CsrfValidationError` (`_cookies.py`, Stage 5d) | `permission_denied` | 403 (see "Cookie/CSRF transport" above — a valid cookie but a failed double-submit check is an authorization, not authentication, failure) |
+| `OAuthStateMismatch` (`_oauth.py`, `#96`) | `unauthenticated` | 401 (the OAuth-flow CSRF/replay defense — a callback whose `state` doesn't match is treated the same as any other failed authentication attempt) |
+| `OAuthNonceMismatch` (`_oauth.py`, `#96`) | `unauthenticated` | 401 (same reasoning as `OAuthStateMismatch`, applied to the OIDC `id_token`'s `nonce` claim) |
+| `UnverifiedEmailAccountConflict` (`_oauth.py`, `#96`) | `conflict` | 409 (an account with this email already exists; see `_oauth.py`'s own docstring for why this refuses to guess rather than picking a side) |
 
 `TokenReused` and `InvalidToken` deliberately map to the SAME code and
 the same generic message on the wire — a client (attacker or otherwise)
@@ -517,6 +591,33 @@ adapters — `fastapi.py`'s and `django.py`'s `AUTH_ERROR_HTTP` tables both
 map `CsrfValidationError` to `(403, "permission_denied")`, identically.
 Also a static-source regression check that `django.py` contains no
 `rest_framework` import statement.
+
+`tests/test_oauth.py` (`#96`) covers `_oauth.py`: `state`/`nonce`
+generation (high-entropy, unique) and verification (every missing/blank/
+mismatched combination raises, `OAuthStateMismatch`/`OAuthNonceMismatch`
+kept as distinct types); `generate_pkce_pair` (RFC 7636 `S256` transform
+matched byte-for-byte against a hand-computed digest, uniqueness,
+unpadded base64url); `build_authorization_url`/`start_authorization`
+(PKCE challenge present, verifier NEVER present in the URL, no
+`client_secret` anywhere, Apple's `response_mode=form_post` +
+`extra_authorize_params` both honored); and — the crown jewel, mirroring
+`test_core.py`'s own emphasis on reuse detection —
+`OAuthAccountService.resolve_or_link`'s full account-linking state
+machine: a brand-new identity creates an account (verified or
+unverified, matching the provider's own claim); a known `(provider,
+subject)` link short-circuits straight to its user WITHOUT re-deriving
+identity from a since-changed email; a verified identity auto-links onto
+a verified existing account; **both unverified-email-attack shapes are
+asserted to raise `UnverifiedEmailAccountConflict`** (an unverified
+identity against a verified existing account, AND a verified identity
+against an unverified existing account — the load-bearing regression
+tests for this recipe); a stale link (target user deleted) falls back to
+email resolution instead of permanently stranding the identity; a
+newly-created account's password hash is a real Argon2id hash of a
+random, discarded value that can never verify true against anything;
+and `complete_login` is asserted to both return a real, persisted
+`TokenPair` and to emit `auth.login` tagged `method="oauth"` through
+`AuthService.issue_session`.
 
 Run (now needs the real `fastapi` package too, since `tests/conftest.py`
 loads `fastapi.py`/`django.py` — see that file's own docstring; `django.py`

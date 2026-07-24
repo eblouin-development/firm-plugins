@@ -63,7 +63,7 @@ Lighter drop-in slices at `plugins/dev-lifecycle/templates/components/<domain>/`
 | Component | What it provides |
 |---|---|
 | `audit-logging` | `audit_event()`, `redact()`, `bind_request_id()` — structured, redacted audit trail helpers |
-| `auth` | `PasswordService`, `TokenService`, `AuthService` — password hashing (argon2), JWT mint/decode, register/login/refresh/logout, FastAPI + Django adapters |
+| `auth` | `PasswordService`, `TokenService`, `AuthService` — password hashing (argon2), JWT mint/decode, register/login/refresh/logout, FastAPI + Django adapters; `_oauth.py` — OAuth 2.0/OIDC PKCE core + `OAuthAccountService` account linking, wired by the `social-login` recipe |
 | `cors-lockdown` | `CORSPolicy` — a framework-neutral explicit-allowlist CORS policy, FastAPI + Django wiring |
 | `idempotency` | `IdempotencyStore` protocol + in-memory/Redis-stub implementations — safe request replay for mutating endpoints |
 | `input-validation` | `StrictModel`, `SafeIdentifier`/`Slug`/`SafeText`/`Email` — hardened pydantic base model and reusable field types |
@@ -74,7 +74,7 @@ Lighter drop-in slices at `plugins/dev-lifecycle/templates/components/<domain>/`
 
 ## 5. Recipes
 
-Twelve feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
+Thirteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
 
 | Recipe | What it wires |
 |---|---|
@@ -88,6 +88,7 @@ Twelve feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RE
 | `push-notifications.md` | Expo push tokens + `expo-notifications` to a backend device-token registration endpoint and Expo's push service (a capability the kit doesn't ship yet — the recipe adds it) |
 | `realtime-websockets.md` | FastAPI's native `WebSocket` endpoint, authenticated at handshake, with a Redis pub/sub fan-out path for multi-process deployments |
 | `search.md` | PostgreSQL full-text search (`tsvector`/`tsquery` + GIN index) wired to an existing model and the `Page[T]` envelope |
+| `social-login.md` | OAuth 2.0/OIDC authorization-code + PKCE (Google, GitHub, Apple) into the `auth` component's new `_oauth.py`, issuing the same session/token shape `end-to-end-auth` already produces, with account-linking rules that defend against the unverified-email attack |
 | `stripe-payments.md` | Stripe Elements/Checkout to the kit's payments-security baseline — tokenized cards, verified webhooks, idempotent mutations, exact decimal money, full audit trail |
 | `transactional-email.md` | The `auth` component's `EmailSender` abstraction for verification/reset mail and any other transactional send |
 
