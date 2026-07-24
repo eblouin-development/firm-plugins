@@ -379,8 +379,13 @@ def event_sink() -> FakeAuthEventSink:
 
 class FakeOAuthAccountStore:
     """In-memory `OAuthAccountStore` -- a dict keyed by `(provider,
-    subject)`, enforcing the natural-key uniqueness a real schema would
-    via a `UNIQUE(provider, subject)` constraint."""
+    subject)`. `link` is an UPSERT (a later call for the same key
+    overwrites the row), matching `OAuthAccountStore.link`'s own
+    documented contract -- NOT a rejecting-insert simulation; a real
+    implementation's `INSERT ... ON CONFLICT (provider, subject) DO
+    UPDATE` behaves identically, which is what lets `resolve_or_link`'s
+    stale-link fallback re-link the same `(provider, subject)` pair to a
+    different user without a constraint violation."""
 
     def __init__(self) -> None:
         self._by_key: dict[tuple[str, str], "oauth.OAuthLinkedAccountRecord"] = {}

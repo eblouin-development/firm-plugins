@@ -418,13 +418,28 @@ class OAuthAccountStore(Protocol):
     async def get_by_provider_subject(self, provider: str, subject: str) -> OAuthLinkedAccountRecord | None: ...
 
     async def link(self, record: OAuthLinkedAccountRecord) -> None:
-        """Persists `record`. Implementations MUST enforce the
-        `(provider, subject)` natural key as UNIQUE and MUST make the
-        write durable (committed) before returning -- the same
-        durable-commit contract `RefreshTokenStore.add` documents, for
-        the identical reason: `resolve_or_link` relies on a just-linked
-        record being immediately visible to a concurrent lookup of the
-        same `(provider, subject)` pair."""
+        """**Upserts** `record`, keyed by the `(provider, subject)` natural
+        key -- e.g. a SQL `INSERT ... ON CONFLICT (provider, subject) DO
+        UPDATE SET user_id = excluded.user_id, email_at_link =
+        excluded.email_at_link, linked_at = excluded.linked_at`, never a
+        plain rejecting `INSERT`. Implementations MUST make the write
+        durable (committed) before returning -- the same durable-commit
+        contract `RefreshTokenStore.add` documents, for the identical
+        reason: `resolve_or_link` relies on a just-linked record being
+        immediately visible to a concurrent lookup of the same
+        `(provider, subject)` pair.
+
+        **Upsert, not a rejecting insert, is a deliberate part of this
+        contract** -- `resolve_or_link`'s stale-link fallback (see that
+        method's own docstring/body) re-calls `link()` for a
+        `(provider, subject)` pair that ALREADY has a row on file (whose
+        target user was deleted) once it re-resolves the identity to a
+        (possibly different) user. A plain `UNIQUE`-enforcing `INSERT`
+        would raise on that second call; `resolve_or_link` depends on
+        this method silently replacing the stale row instead. The
+        `(provider, subject)` key therefore still behaves as unique
+        storage-wide (at most one row per pair, ever) -- it is just
+        maintained via upsert semantics rather than insert-and-reject."""
         ...
 
 
@@ -528,7 +543,12 @@ class OAuthAccountService:
             # exactly as if this were a first-time login, rather than
             # raising: a stale link row is a data-hygiene concern for the
             # app to clean up, not a reason to lock this identity out of
-            # the account-resolution flow entirely.
+            # the account-resolution flow entirely. The re-link below
+            # OVERWRITES this same (provider, subject) row via
+            # OAuthAccountStore.link's upsert contract (see that
+            # Protocol method's own docstring) -- it does not attempt a
+            # fresh insert that a rejecting UNIQUE constraint would
+            # reject.
 
         normalized_email = self._normalize_email(identity.email)
         existing_user = await self._users.get_by_email(normalized_email)
@@ -570,6 +590,21 @@ class OAuthAccountService:
         a caller that only needs identity resolution (e.g. an explicit,
         already-authenticated "connect this provider to my account" flow,
         which must NOT mint a fresh session -- the user is already logged
-        in) can call `resolve_or_link` alone."""
+        in) can call `resolve_or_link` alone.
+
+        **Does NOT honor `AuthService`'s `require_verification` policy**
+        the way password `login` does -- a resolved `OAuthIdentity` can
+        reach `issue_session` even when the linked/created `UserRecord`'s
+        `email_verified` is `False` (the "new account, provider did not
+        verify the email" branch of `resolve_or_link`). This is
+        deliberately NOT an account-takeover gap: that branch only ever
+        creates a BRAND-NEW account (an existing, verified account can
+        never be silently downgraded -- see `UnverifiedEmailAccountConflict`),
+        so the worst case is a fresh account proceeding without email
+        verification, the same outcome `require_verification=False`
+        already produces for `AuthService.login`. A project that wants
+        federated logins to also honor `require_verification` checks
+        `user.email_verified` itself after this call and denies/redirects
+        accordingly -- `_oauth.py` does not gate on it internally."""
         user = await self.resolve_or_link(identity)
         return await self._auth.issue_session(user)
