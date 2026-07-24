@@ -75,7 +75,7 @@ Lighter drop-in slices at `plugins/dev-lifecycle/templates/components/<domain>/`
 
 ## 5. Recipes
 
-Thirteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
+Sixteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
 
 | Recipe | What it wires |
 |---|---|
@@ -87,6 +87,7 @@ Thirteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_
 | `end-to-end-auth.md` | The `auth` component across backend (fastapi/django), web (cookie mode), and mobile (bearer mode) into one contract |
 | `feature-flags.md` | Env-backed flags via `settings` for deploy-time toggles, plus a DB-backed table for redeploy-free flags, default-off |
 | `file-upload-s3.md` | Direct-to-S3 upload via a server-minted presigned URL — the server never receives the file body |
+| `gdpr-data-rights.md` | Subject-access export, right-to-erasure (grace period, hard-delete vs. anonymize-in-place), and a cookie-consent gate — reusing `auth`'s `SingleUseTokenService`, `background-jobs`, `transactional-email`, and `audit-logging` |
 | `llm-features.md` | A backend Anthropic-backed LLM service layer — typed schemas, SSE streaming, retries/timeouts, server-only key custody, per-user rate/budget/output caps, and an explicit prompt-injection posture |
 | `push-notifications.md` | Expo push tokens + `expo-notifications` to a backend device-token registration endpoint and Expo's push service (a capability the kit doesn't ship yet — the recipe adds it) |
 | `realtime-websockets.md` | FastAPI's native `WebSocket` endpoint, authenticated at handshake, with a Redis pub/sub fan-out path for multi-process deployments |
