@@ -3,6 +3,33 @@
 A Claude Code plugin marketplace: the development firm's lifecycle skills and a self-extending, version-aware reference library. This repo is itself a project in the firm — changes go through the same plan → PR → review → merge → release pipeline as any other repo.
 
 > Names (`eblouin-plugins`, `dev-lifecycle`) are placeholders — rename to taste before first publish.
+>
+> **Renaming the org/repo?** Most of the codebase already derives the owner
+> and repo dynamically (`${{ github.repository }}` / `${{ github.repository_owner }}`
+> in workflows that run inside this repo, or an `owner`/`repo` input threaded
+> through the reusable Action workflows) and needs no edit. Where a literal
+> has to exist, it follows one placeholder convention — `<owner>` for the
+> GitHub handle/org, `<repo>` for this repo's name — and you fill both in at
+> the same time you do the rename:
+> - `plugins/dev-lifecycle/assets/workflows/{claude.yml,claude-review.yml}` — the
+>   `uses:` path and the `owner:`/`repo:` inputs (copied per-project, so this is
+>   a one-time substitution per project you scaffold, not per rename here)
+> - `plugins/dev-lifecycle/skills/{scaffolding,onboarding}/SKILL.md` — the wiring
+>   instructions reference the same `<owner>`/`<repo>` pair
+> - `.github/fleet-repos.txt` — replace the commented placeholder examples with
+>   your own fleet's `owner/repo` entries
+> - `.claude/settings.json` and this repo's own literal mentions (`README.md`,
+>   `docs/SETUP-AND-USAGE.md`, `.claude-plugin/marketplace.json`'s `name`) —
+>   these describe *this* repo's actual identity, so update them to match
+>   wherever you rename to
+> - `CLAUDE.md` / `.github/pull_request_template.md` — this repo's own `cc
+>   @eblouin876` convention is a literal for *this* repo's owner; update the
+>   handle to your own, or derive it if you script the rename (see #84's
+>   `${{ github.repository_owner }}` pattern used in the shared workflows)
+>
+> `scripts/validate_plugin.py` enforces the Action-wiring half of this (every
+> reusable-workflow caller must pass both `owner` and `repo`), so a stale
+> caller stub fails validation instead of silently pointing at the original repo.
 
 ## Install
 

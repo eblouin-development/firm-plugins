@@ -1,6 +1,6 @@
 # Fleet repos the coverage-audit scans for reference-library gaps.
 # One `owner/repo` per line. Lines starting with `#` and blank lines are ignored.
-# eblouin-plugins itself is intentionally excluded — it IS the library.
+# The plugin marketplace repo itself is intentionally excluded — it IS the library.
 #
 # The coverage-audit workflow reads this file weekly, inventories each repo's
 # significant direct dependencies, diffs them against
@@ -9,9 +9,8 @@
 # changes — add a repo here and its stack is covered on the next run.
 #
 # Private repos require the FLEET_READ_TOKEN secret (see the workflow header).
-
-eblouin-development/Outgrown
-eblouin-development/schwab_trader
-eblouin-development/TeamForge
-eblouin-development/grain-brain
-eblouin-development/backyard-farmer
+#
+# Replace the commented examples below with your own fleet's `owner/repo`
+# entries:
+# <owner>/<repo-one>
+# <owner>/<repo-two>

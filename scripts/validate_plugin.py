@@ -262,6 +262,41 @@ for path in sorted(glob.glob(os.path.join(PLUGIN, "assets", "workflows", "*.yml"
             "('secrets: inherit') so CLAUDE_CODE_OAUTH_TOKEN reaches it")
     if "owner" not in (caller.get("with") or {}):
         err(f"{rel}: the reusable-workflow call must pass the 'owner' input")
+    if "repo" not in (caller.get("with") or {}):
+        err(f"{rel}: the reusable-workflow call must pass the 'repo' input "
+            "(the marketplace repo name — a literal like 'eblouin-plugins' "
+            "assumed constant breaks under a fork or rename)")
+
+# 6. no hardcoded personal handle in SHARED skill/workflow text. This repo's
+#    own CLAUDE.md and .github/pull_request_template.md are allowed to keep a
+#    literal `cc @<handle>` convention (it's genuinely this repo's owner and
+#    the README documents the substitution on rename); everything that ships
+#    to — or is read by — every other repo must not hardcode one owner.
+PERSONAL_HANDLE = "eblouin876"
+HANDLE_EXEMPT = {
+    os.path.join(ROOT, "CLAUDE.md"),
+    os.path.join(ROOT, ".github", "pull_request_template.md"),
+}
+HANDLE_SCAN_GLOBS = [
+    os.path.join(PLUGIN, "skills", "**", "*.md"),
+    os.path.join(PLUGIN, "assets", "**", "*"),
+    os.path.join(ROOT, ".github", "workflows", "*.yml"),
+    os.path.join(ROOT, ".github", "workflows", "*.yaml"),
+]
+for pattern in HANDLE_SCAN_GLOBS:
+    for path in glob.glob(pattern, recursive=True):
+        if not os.path.isfile(path) or path in HANDLE_EXEMPT:
+            continue
+        try:
+            text = open(path, encoding="utf-8").read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        if "@" + PERSONAL_HANDLE in text:
+            err(f"{os.path.relpath(path, ROOT)}: hardcodes the personal handle "
+                f"'@{PERSONAL_HANDLE}' — shared skill/workflow text must use the "
+                "'<owner>' placeholder (or, in a workflow that can, derive it "
+                "with '${{ github.repository_owner }}') instead of a literal "
+                "personal handle")
 
 # report
 for w in warnings:

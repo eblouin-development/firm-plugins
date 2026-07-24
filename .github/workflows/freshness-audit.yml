@@ -2,7 +2,11 @@ name: freshness-audit
 
 # Periodic review to keep the whole starter kit fresh — references, template
 # blocks, recipes, the compatibility matrix, and doc-fragment drift. Two
-# jobs, split by least privilege (see pending-workflows/README.md for why):
+# jobs, split by least privilege: `audit` only ever opens a tracking issue, so
+# it runs with read-only contents + issues:write, while `extended-audit`
+# pushes a branch and opens a review PR, so it needs contents:write +
+# pull-requests:write. Keeping them as separate jobs means the read-only job's
+# token never carries write scope it doesn't need.
 #
 #   audit            — UNCHANGED from the original. Reads the metadata
 #                       header on each reference (versions-covered,
@@ -40,20 +44,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # github.event.repository is only populated on repository-scoped
+      # events — this workflow's primary trigger is `schedule`, which does
+      # NOT populate it, so deriving the bare repo name from that context
+      # silently degrades to an empty string on every scheduled run
+      # (workflow_dispatch masks it, since manual dispatch does populate
+      # it). $GITHUB_REPOSITORY is always `owner/repo` on every event.
+      - name: Resolve marketplace repo name
+        id: mp
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       - name: Freshness audit
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: |
-            https://github.com/eblouin-development/eblouin-plugins.git
+            https://github.com/${{ github.repository }}.git
           plugins: |
-            dev-lifecycle@eblouin-plugins
+            dev-lifecycle@${{ steps.mp.outputs.name }}
           claude_args: "--model claude-sonnet-5"
           prompt: |
             Run a freshness audit of the reference library in
-            plugins/dev-lifecycle/references/.
+            plugins/dev-lifecycle/references/. This prompt is self-contained;
+            there is no freshness-audit skill in this plugin.
 
-            Use the freshness-audit skill. For each reference file, read its
+            For each reference file, read its
             metadata header (library, versions-covered, last-verified). For
             each library, check its current stable major version and whether
             its official docs show idiom or best-practice changes not yet
@@ -79,14 +94,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # See the `audit` job's identical step above for why this can't use
+      # github.event.repository.name (unpopulated on the `schedule` trigger).
+      - name: Resolve marketplace repo name
+        id: mp
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       - name: Extended freshness audit (templates, recipes, matrix, docs)
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: |
-            https://github.com/eblouin-development/eblouin-plugins.git
+            https://github.com/${{ github.repository }}.git
           plugins: |
-            dev-lifecycle@eblouin-plugins
+            dev-lifecycle@${{ steps.mp.outputs.name }}
           claude_args: "--model claude-sonnet-5 --allowedTools Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
           prompt: |
             Run the EXTENDED freshness audit for the dev-lifecycle starter
@@ -94,9 +115,7 @@ jobs:
             workflow, covering everything that job does not: template
             blocks, recipes, the compatibility matrix, and doc drift.
             This prompt is self-contained; there is no freshness-audit
-            skill to invoke for this job (only the sibling `audit` job's
-            references-only prompt references one, and even that skill does
-            not exist yet — do not look for it).
+            skill in this plugin.
 
             Ground every version/idiom check in current official sources
             (registries, release notes, changelogs) — never recall. Today's
@@ -212,8 +231,8 @@ jobs:
                by dimension (1-4), what was proposed and what merely needs a
                human decision (e.g. an ambiguous rebuild-verify failure or a
                deliberate-hold judgment call the audit isn't confident
-               overriding), and add a line `cc @eblouin876` (repo convention
-               — the owner is tagged on every PR).
+               overriding), and add a line `cc @${{ github.repository_owner }}`
+               (repo convention — the owner is tagged on every PR).
 
             If NOTHING was flagged across all four dimensions, do not create
             a branch or open a PR — finish without changes. Never touch

@@ -13,7 +13,7 @@ sources:
 
 # WebSockets conventions
 
-Idioms for the long-lived real-time layer: the `websockets` library as a **client** consuming streaming market data, and FastAPI/Starlette WebSocket endpoints **serving** clients. Read after detecting `websockets` in the manifest, or a FastAPI app with `@app.websocket`. Subordinate to project conventions — if the app already has a stream client or connection manager, match it.
+Idioms for the long-lived real-time layer: the `websockets` library as a **client** consuming a streaming data feed, and FastAPI/Starlette WebSocket endpoints **serving** clients. Read after detecting `websockets` in the manifest, or a FastAPI app with `@app.websocket`. Subordinate to project conventions — if the app already has a stream client or connection manager, match it.
 
 ## Contents
 - Version check
