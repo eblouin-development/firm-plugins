@@ -1,0 +1,42 @@
+name: "Epic"
+description: "Charter a whole product or a major new system. Mirrors the shape the `product-planning` skill produces — vision, architecture, staged roadmap — so hand-filed and skill-filed epics stay consistent."
+title: "[Epic]: "
+labels:
+  - "epic"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form mirrors the `product-planning` skill's epic shape (vision → architecture → staged roadmap → sub-issue checklist). Each stage should be filed as its own issue (via the `feature.yml` form or the `planning` skill) and registered as a native GitHub sub-issue of this epic, with an `Epic: #<this-issue-number>` marker line in its body — that pair is what lets the roadmap checklist below be reconciled automatically as stages close.
+  - type: textarea
+    id: vision
+    attributes:
+      label: "Vision / north star"
+      description: "What is this product or system, who is it for, and what does success look like?"
+    validations:
+      required: true
+  - type: textarea
+    id: architecture
+    attributes:
+      label: "Architecture / stack notes"
+      description: "The cross-cutting decisions every stage inherits: stack, high-level architecture, core data model shape, auth approach, key conventions. Link the architecture ADR if one exists."
+    validations:
+      required: true
+  - type: textarea
+    id: roadmap
+    attributes:
+      label: "Staged roadmap"
+      description: "The ordered checklist of stages. Put each stage's sub-issue number on its line once filed."
+      placeholder: |
+        - [ ] Stage 1 — <name> (#issue)
+        - [ ] Stage 2 — <name> (#issue)
+        - [ ] Stage 3 — <name> (#issue)
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: "ADR / milestone links"
+      description: "Links to the architecture ADR and the milestones tracking each stage."
+    validations:
+      required: false
