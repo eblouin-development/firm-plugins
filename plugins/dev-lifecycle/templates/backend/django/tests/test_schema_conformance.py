@@ -264,46 +264,44 @@ def _wire_surface(schema_root: dict[str, Any]) -> dict[tuple[str, str], dict[str
 # ---------------------------------------------------------------------------
 
 
-# ONE genuine, narrowly-scoped, DOCUMENTED exception -- NOT a normalizer
-# fudge (see this module's own docstring: "do not fudge the normalizer to
-# force a pass"; this constant deliberately lives OUTSIDE the normalizer,
-# applied only after honest normalization already ran, and is reported by
-# `test_operation_id_and_component_name_parity_report` too, not hidden).
+# No genuine, narrowly-scoped, DOCUMENTED exceptions are currently open --
+# NOT a normalizer fudge (see this module's own docstring: "do not fudge
+# the normalizer to force a pass"; any entry here would live OUTSIDE the
+# normalizer, applied only after honest normalization already ran, and
+# would be reported by `test_operation_id_and_component_name_parity_report`
+# too, never hidden).
 #
-# `PATCH /items/{item_id}`'s request body: the frozen contract's `ItemUpdate.
-# name` (packages/api-client/openapi.json) is `str | None = Field(default=
-# None, min_length=1, max_length=200)` -- `backend/fastapi/app/schemas/
-# item.py` -- genuinely NULLABLE, meaning `{"name": null}` passes that
-# schema's own validation. But `backend/fastapi/app/api/routers/items.py`'s
-# `update_item` has NO guard against an explicitly-null `name` before
-# `repo.update(obj, name=None)` -- `Item.name` is a NOT-NULL column on both
-# tracks (`core/models.py: name = models.CharField(max_length=200)`, no
-# `null=True`), so that request would reach the DB and raise a NOT-NULL
-# constraint violation there, surfacing as an unhandled 500 -- THE FROZEN
-# CONTRACT ITSELF documents an input its own reference implementation
-# cannot safely accept. Mirroring that nullable declaration into `core/
-# serializers.py`'s `ItemUpdateSerializer.name` (`allow_null=True`) would
-# import the identical crash risk into this block, for the sake of a
-# closer schema match -- copying a discovered bug is not "conformance."
-# Django's ACTUAL behavior (`allow_null` unset -- explicit `null` is
-# REJECTED with a clean 422 `validation_failed`, never reaches the DB) is
-# the safer, more defensible posture; this test proves the REST of the
-# wire surface is identical and reports this ONE field-level schema
-# divergence explicitly rather than silently matching or silently
-# ignoring it. Flagged in this PR's decision log as a FastAPI-side
-# follow-up (Stage 12/hardening candidate, not fixed here — out of this
-# step's scope, which only touches `backend/django`): either make
-# `ItemUpdate.name` genuinely non-nullable, or add an explicit
-# `if "name" in updates and updates["name"] is None: raise
-# ValidationFailedError(...)` guard before `repo.update(...)`.
-_KNOWN_DIVERGENCES: dict[tuple[tuple[str, str], str], str] = {
-    (("/items/{param}", "patch"), "request"): (
-        "frozen contract's ItemUpdate.name is schema-nullable with no "
-        "implementation-side guard against an explicit null (a discovered "
-        "gap in the frozen contract itself, not mirrored here -- see this "
-        "test's own module-level comment above _KNOWN_DIVERGENCES)"
-    ),
-}
+# Issue #41 (Stage 12/hardening): `PATCH /items/{item_id}`'s request body
+# used to diverge here. The frozen contract's `ItemUpdate.name`
+# (packages/api-client/openapi.json) was `str | None = Field(default=None,
+# min_length=1, max_length=200)` -- `backend/fastapi/app/schemas/item.py`
+# -- genuinely NULLABLE, meaning `{"name": null}` passed that schema's own
+# validation, then reached `backend/fastapi/app/api/routers/items.py`'s
+# `update_item` with no guard against the explicit null before
+# `repo.update(obj, name=None)`, which crashed on `Item.name`'s NOT-NULL
+# column (a 500) -- THE FROZEN CONTRACT ITSELF documented an input its own
+# reference implementation could not safely accept. This block never
+# mirrored that nullable declaration into `core/serializers.py`'s
+# `ItemUpdateSerializer.name` (`allow_null` stayed unset, so an explicit
+# `null` was always REJECTED with a clean 422 `validation_failed`, never
+# reaching the DB) -- copying a discovered bug is not "conformance," so
+# this was a genuine, intentional divergence, entered below and reported
+# by the parity report rather than silently matched or silently ignored.
+#
+# #41's fix retyped `ItemUpdate.name` as plain `str` with a `None`
+# "omitted" sentinel default (`backend/fastapi/app/schemas/item.py`):
+# omitting `name` still leaves it out of `model_fields_set`/
+# `exclude_unset=True` (unchanged partial-update behavior), but an
+# explicitly supplied `null` now fails native `str` type validation --
+# 422 `validation_failed`, matching this block's `ItemUpdateSerializer`
+# byte-for-byte -- and the regenerated frozen contract's `ItemUpdate.name`
+# is no longer schema-nullable either. The divergence this constant
+# documented no longer exists; `_KNOWN_DIVERGENCES` goes back to EMPTY,
+# not deleted -- same posture `_PENDING_PARITY_OPS` (below) already
+# documents for itself: this constant (and both stale-guards below, which
+# still apply to any FUTURE divergence) stays the documented seam a later
+# discovered gap reuses.
+_KNOWN_DIVERGENCES: dict[tuple[tuple[str, str], str], str] = {}
 
 
 # ---------------------------------------------------------------------------

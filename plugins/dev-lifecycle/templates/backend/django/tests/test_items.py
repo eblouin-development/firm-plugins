@@ -61,6 +61,48 @@ def test_update_item(api_client: APIClient) -> None:
     assert response.json()["name"] == "Renamed"
 
 
+def test_update_item_omitting_name_is_a_valid_partial_update(api_client: APIClient) -> None:
+    """`{}` (nothing set) and a body that only sets `description` must both
+    still be valid no-op-on-`name` partial updates."""
+    created = api_client.post("/items", {"name": "Original"}, format="json").json()
+
+    empty_response = api_client.patch(f"/items/{created['id']}", {}, format="json")
+    assert empty_response.status_code == 200
+    assert empty_response.json()["name"] == created["name"]
+
+    description_only = api_client.patch(
+        f"/items/{created['id']}", {"description": "Updated."}, format="json"
+    )
+    assert description_only.status_code == 200
+    body = description_only.json()
+    assert body["name"] == created["name"]
+    assert body["description"] == "Updated."
+
+
+def test_update_item_with_explicit_null_name_returns_enveloped_422(api_client: APIClient) -> None:
+    """Regression test for #41 (Django track): `PATCH /items/{id}` with
+    `{"name": null}` must be rejected as a 422 `validation_failed`
+    envelope, matching the now-fixed FastAPI track's behavior byte-for-
+    byte (`ItemUpdateSerializer.name` has no `allow_null=True`, so this
+    was already correct on this track -- this test locks it in)."""
+    created = api_client.post("/items", {"name": "Original"}, format="json").json()
+
+    response = api_client.patch(f"/items/{created['id']}", {"name": None}, format="json")
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"]["code"] == "validation_failed"
+    assert body["error"]["message"]
+    assert isinstance(body["error"]["details"], list)
+    assert len(body["error"]["details"]) >= 1
+    assert any(detail["field"].endswith("name") for detail in body["error"]["details"])
+
+    # The row itself must be untouched.
+    fetched = api_client.get(f"/items/{created['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["name"] == created["name"]
+
+
 def test_delete_item_is_soft_delete(api_client: APIClient) -> None:
     """Checks the soft-delete state directly via the ORM rather than
     following up with a GET on the now-missing id: `get_object()`

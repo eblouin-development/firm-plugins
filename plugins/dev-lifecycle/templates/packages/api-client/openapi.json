@@ -3496,16 +3496,9 @@
       "ItemUpdate": {
         "properties": {
           "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 200,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
             "title": "Name"
           },
           "description": {
@@ -3524,7 +3517,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ItemUpdate",
-        "description": "The update-body schema \u2014 every field optional, so a client can PATCH\na subset. The route maps only explicitly-set fields\n(`model_dump(exclude_unset=True)`) onto the existing row."
+        "description": "The update-body schema \u2014 every field optional, so a client can PATCH\na subset. The route maps only explicitly-set fields\n(`model_dump(exclude_unset=True)`) onto the existing row.\n\n`name` is NOT NULL at the DB level (`app/models/item.py`'s\n`Item.name`) \u2014 unlike `description` (nullable), an explicit\n`{\"name\": null}` must never reach `update_item`'s\n`model_dump(exclude_unset=True)` as a \"set the column to NULL\"\ninstruction (that 500s on the NOT NULL constraint; issue #41). `name`\nis deliberately typed plain `str` \u2014 NOT `str | None` \u2014 with a `None`\n*default* standing in as the \"omitted\" sentinel: `StrictModel`'s\n`strict=True` (`app/core/security/input_validation/validation.py`)\nmeans Pydantic only ever *coerces/checks* a value against `str` when\nthe field is actually supplied, never against an unvalidated default,\nso `{}` (name omitted) still leaves `name=None` internally with\n`\"name\" not in model_fields_set` \u2014 exactly what lets `update_item`'s\n`model_dump(exclude_unset=True)` keep treating an omitted `name` as\n\"leave the column alone\", the same partial-update contract as before.\nAn explicitly supplied `{\"name\": null}`, though, now hits real `str`\ntype validation and is rejected by Pydantic itself as a plain\n`string_type` error \u2014 a 422 `validation_failed` envelope, same as any\nother malformed field \u2014 with NO extra `model_validator` needed. This\nalso fixes the OTHER half of #41: since the field's declared type is\nnow plain `str` (not `str | None`), the generated OpenAPI schema for\n`name` is `{\"type\": \"string\", ...}` with no `anyOf`-`null` branch,\nso the contract itself no longer claims a `null` `name` is valid \u2014\nunlike `app/schemas/blog.py`'s `BlogPostUpdate`, which behaviorally\nrejects an explicit `null` via a `model_validator` (`_reject_explicit_\nnull`) but still leaves its own OpenAPI schema nullable; this sentinel\napproach was chosen here specifically because the frozen contract\n(`packages/api-client/openapi.json`) is what #41 flagged as wrong, not\nonly the runtime 500. (Previously a documented, NOT mirrored,\ndivergence from the Django track \u2014 see `tests/\ntest_schema_conformance.py`'s `_KNOWN_DIVERGENCES` \u2014 now removed since\nthe two tracks match again.)"
       },
       "LoginRequest": {
         "properties": {
