@@ -215,8 +215,8 @@ jobs:
                by dimension (1-4), what was proposed and what merely needs a
                human decision (e.g. an ambiguous rebuild-verify failure or a
                deliberate-hold judgment call the audit isn't confident
-               overriding), and add a line `cc @eblouin876` (repo convention
-               — the owner is tagged on every PR).
+               overriding), and add a line `cc @${{ github.repository_owner }}`
+               (repo convention — the owner is tagged on every PR).
 
             If NOTHING was flagged across all four dimensions, do not create
             a branch or open a PR — finish without changes. Never touch

@@ -92,8 +92,8 @@ jobs:
                "Coverage audit: add N reference(s)". In the body, list each new
                reference with the repos that drove it and the versions covered,
                note any repos skipped for access, list deferred gaps, and add a
-               line `cc @eblouin876` (repo convention — the owner is tagged on
-               every PR).
+               line `cc @${{ github.repository_owner }}` (repo convention —
+               the owner is tagged on every PR).
 
             If there are NO gaps, do not open a PR — finish without changes.
             Do not modify or "refresh" existing references here; staleness is
