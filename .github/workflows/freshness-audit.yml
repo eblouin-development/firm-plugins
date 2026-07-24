@@ -2,7 +2,11 @@ name: freshness-audit
 
 # Periodic review to keep the whole starter kit fresh — references, template
 # blocks, recipes, the compatibility matrix, and doc-fragment drift. Two
-# jobs, split by least privilege (see pending-workflows/README.md for why):
+# jobs, split by least privilege: `audit` only ever opens a tracking issue, so
+# it runs with read-only contents + issues:write, while `extended-audit`
+# pushes a branch and opens a review PR, so it needs contents:write +
+# pull-requests:write. Keeping them as separate jobs means the read-only job's
+# token never carries write scope it doesn't need.
 #
 #   audit            — UNCHANGED from the original. Reads the metadata
 #                       header on each reference (versions-covered,
@@ -51,9 +55,10 @@ jobs:
           claude_args: "--model claude-sonnet-5"
           prompt: |
             Run a freshness audit of the reference library in
-            plugins/dev-lifecycle/references/.
+            plugins/dev-lifecycle/references/. This prompt is self-contained;
+            there is no freshness-audit skill in this plugin.
 
-            Use the freshness-audit skill. For each reference file, read its
+            For each reference file, read its
             metadata header (library, versions-covered, last-verified). For
             each library, check its current stable major version and whether
             its official docs show idiom or best-practice changes not yet
@@ -94,9 +99,7 @@ jobs:
             workflow, covering everything that job does not: template
             blocks, recipes, the compatibility matrix, and doc drift.
             This prompt is self-contained; there is no freshness-audit
-            skill to invoke for this job (only the sibling `audit` job's
-            references-only prompt references one, and even that skill does
-            not exist yet — do not look for it).
+            skill in this plugin.
 
             Ground every version/idiom check in current official sources
             (registries, release notes, changelogs) — never recall. Today's
