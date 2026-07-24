@@ -198,6 +198,7 @@ Commit a `.claude/settings.json` (which *does* carry into cloud sessions, unlike
 | Audit a whole project's security | `security-audit` |
 | Seed data & build reports | `data` |
 | Write docs / ADRs / API reference | `documentation` |
+| Write a client status update, release notes, or handoff package | `client-comms` |
 | Root-cause a failure | `debugging` |
 | Understand code / a PR (read-only explainer) | `walkthrough` |
 
