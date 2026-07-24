@@ -1,6 +1,6 @@
 <!--
 scope: cross-stack starter kit
-versions-covered: "Stage 0 kit-wide pin set, 2026-07; Stage 2 security-tooling pin set, 2026-07; Stage 4 psycopg row, 2026-07; Stage 4 Step 3 django-cors-headers row, 2026-07; Stage 4 Step 4 Containers rows now also cite backend/django, 2026-07; Stage 6 Frontend/web + Frontend testing rows for the Vite SPA / @repo/web-shared stack, 2026-07; Stage 8 Mobile rows, 2026-07; Stage 7 Next.js @tailwindcss/postcss row, 2026-07; Stage 13 Editor (WYSIWYG) TipTap rows, 2026-07; Stage 13d nh3 row, 2026-07; issue #100 worker/celery block — Celery/redis-py/django-celery-beat + Data/Containers Redis rows, 2026-07"
+versions-covered: "Stage 0 kit-wide pin set, 2026-07; Stage 2 security-tooling pin set, 2026-07; Stage 4 psycopg row, 2026-07; Stage 4 Step 3 django-cors-headers row, 2026-07; Stage 4 Step 4 Containers rows now also cite backend/django, 2026-07; Stage 6 Frontend/web + Frontend testing rows for the Vite SPA / @repo/web-shared stack, 2026-07; Stage 8 Mobile rows, 2026-07; Stage 7 Next.js @tailwindcss/postcss row, 2026-07; Stage 13 Editor (WYSIWYG) TipTap rows, 2026-07; Stage 13d nh3 row, 2026-07; issue #100 worker/celery block — Celery/redis-py/django-celery-beat + Data/Containers Redis rows, 2026-07; issue #101 infra/compose-host block — Infra Docker Compose v2 + Caddy rows, Containers Caddy/Tailscale image rows, 2026-07"
 last-verified: 2026-07-24
 provenance: manual
 sources:
@@ -73,6 +73,10 @@ sources:
   - https://pypi.org/project/redis/
   - https://pypi.org/project/django-celery-beat/
   - https://hub.docker.com/_/redis
+  - https://github.com/caddyserver/caddy/releases
+  - https://hub.docker.com/_/caddy
+  - https://hub.docker.com/r/tailscale/tailscale/tags
+  - https://docs.docker.com/compose/releases/
 -->
 
 # Compatibility matrix
@@ -201,6 +205,8 @@ The rich-text editor stack for the admin tool's blog editor (`templates/frontend
 | --- | --- | --- |
 | Terraform (core) | **~> 1.15** | Latest supported minor as of this pin; 1.16 exists only as an alpha. See `references/infra/terraform.md`. |
 | Terraform AWS provider | **~> 6.55** (major `6.x`) | Current provider major; pin the major with a floor, let patches float per module. |
+| Docker Compose | **v2 spec, CLI >= 2.24** (the `compose` CLI plugin, not standalone `docker-compose` v1) | The compose-file schema `templates/infra/compose-host/docker-compose.prod.yml` targets — v1 is EOL; every invocation in that block is `docker compose` (plugin), never `docker-compose`. The `>= 2.24` floor is for `docker-compose.tailscale.yml`'s `!override` merge tag (`docs.docker.com/reference/compose-file/merge/`), which drops the base file's public port publish when the overlay is applied. |
+| Caddy | **~2.11.x** (`caddy:2.11-alpine`, v2.11.4 current at this pin) | `templates/infra/compose-host/`'s reverse proxy — automatic Let's Encrypt TLS with zero manual cert config, chosen over Traefik/nginx for that zero-config default (issue #101: "Caddy or Traefik", Caddy picked as the block's actual choice). |
 
 ## Containers
 | Dep | Pinned line | Why this line |
@@ -210,6 +216,8 @@ The rich-text editor stack for the admin tool's blog editor (`templates/frontend
 | Postgres image (dev compose) | **`postgres:18-bookworm`** | Matches the "Data" row's PostgreSQL 18.x pin, Bookworm-based for consistency with the two rows above. Used by `templates/backend/fastapi/docker-compose.yml` (Stage 3 #26, Step 4's dev-run seam) AND `templates/backend/django/docker-compose.yml` (Stage 4 #27, Step 4's own dev-run seam — the same pin, cited once, reused rather than re-pinned separately per backend track). **Judgment call:** a sandboxed/offline verification environment without registry access may only have Postgres 16 installed locally (`pg_ctlcluster`) to prove the alembic/asyncpg (FastAPI) or migrate/psycopg (Django) path against directly — that's a verification-environment substitute, not a repin of either compose file, both of which stay on the matrix's real 18.x line. |
 | uv base image (Dockerfile) | **`ghcr.io/astral-sh/uv:0.11.31`** | Same uv version already pinned above ("Security tooling" row, for CI's `deps` job) — one uv version across the kit rather than a Docker-only drift. `templates/backend/fastapi/Dockerfile` AND `templates/backend/django/Dockerfile` both copy the `uv`/`uvx` binaries out of this image via `COPY --from=`, per uv's own documented Docker integration pattern. |
 | Redis image (dev compose) | **`redis:8-bookworm`** | Matches the "Data" row's Redis 8.x pin, Bookworm-based for consistency with the Python/Node/Postgres image rows above. Used by `templates/worker/celery/docker-compose.yml` (this block's own standalone dev stack) and the monorepo root `docker-compose.yml`'s shared `redis` service once that block is wired into a full project. |
+| Caddy image (compose-host) | **`caddy:2.11-alpine`** | Matches the "Infra" row's Caddy ~2.11.x pin. Used by `templates/infra/compose-host/docker-compose.prod.yml` as the TLS-terminating reverse proxy for a single Docker host. |
+| Tailscale image (compose-host, Tailscale variant) | **`tailscale/tailscale:v1.98`** | Current stable (`stable` tag, Docker Hub, v1.98.9 as of this pin). The sidecar `templates/infra/compose-host/docker-compose.tailscale.yml` joins to the tailnet for the Serve/Funnel networking variant. |
 
 ## Security tooling (CI scanners)
 The pin set `assets/workflows/security.yml` (the firm's security-gate workflow, `references/security/secure-baseline.md`'s CI-scanning section) runs against. Each tool's **binary/CLI** is invoked at an exact pinned version so a gate's pass/fail is reproducible run to run — that part is not a moving target. **Caveat:** semgrep's two rulesets (`p/ci`, `p/owasp-top-ten`) are pulled live from Semgrep's public registry on every run and are *not* pinned — they float by design, since a pinned/vendored ruleset would mean either a Semgrep AppSec Platform login (to pull a fixed registry snapshot) or hand-maintaining the rule set ourselves. Accepted tradeoff for staying unauthenticated on `GITHUB_TOKEN` only: the semgrep binary version is reproducible, its finding set is not.
