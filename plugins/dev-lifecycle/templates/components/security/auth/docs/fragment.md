@@ -73,6 +73,22 @@ parity for this surface is pending — `backend/django/tests/
 test_schema_conformance.py`'s `_PENDING_PARITY_OPS` tracks the three
 still-unimplemented ops.
 
+**OAuth 2.0/OIDC social login (`#96`):** `_oauth.py` — a THIRD
+framework-neutral, stdlib-only file — adds PKCE (`S256`-only), state/
+nonce generation and verification, provider-agnostic authorization-URL
+building, and `OAuthAccountService` (the account-linking orchestrator,
+including the unverified-email-account-takeover defense — see this
+component's README's own "OAuth 2.0/OIDC social login" section). `_core.py`
+gained one small, additive public method, `AuthService.issue_session(user)`,
+so a federated login mints the EXACT SAME session/token shape a password
+login does; `login`/`refresh`/`logout`/`resolve_access` are unchanged.
+`references/recipes/social-login.md` is the wire-up: it composes this
+file plus the existing `fastapi.py`/`django.py` bearer/cookie transport,
+the app-level HTTP calls to each provider's token/userinfo/JWKS
+endpoints, and the frontend/mobile provider-button + Expo AuthSession
+pieces — no new catalog component was needed; `_oauth.py` vendors
+alongside `_core.py` exactly like `_cookies.py` already does.
+
 ## Maintenance
 `AuthService.refresh`'s reuse-detection state machine is the security-
 critical core of this component — re-run `tests/test_core.py` after any
@@ -83,4 +99,8 @@ upgrade old hashes on next successful login, rather than a bulk
 migration — wire that check into the framework adapter's login flow once
 it exists. Re-verify the PyJWT/argon2-cffi pins against
 `references/compatibility-matrix.md` on the same cadence as the rest of
-the Backend — Python row.
+the Backend — Python row. `OAuthAccountService.resolve_or_link`'s
+unverified-email-attack defense (`tests/test_oauth.py`) is equally
+security-critical to `_oauth.py` — re-run it after any change to the
+account-linking logic, especially the "both sides must be verified before
+auto-linking" tests.

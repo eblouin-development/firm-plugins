@@ -1270,6 +1270,27 @@ class AuthService:
         interface a framework adapter already depends on."""
         return self._tokens.decode_access(raw_access_token)
 
+    async def issue_session(self, user: UserRecord) -> TokenPair:
+        """Mints a brand-new refresh-token FAMILY and an access+refresh pair
+        for a principal whose identity was ALREADY established by some means
+        other than this class's own password check -- the sole caller in
+        this catalog is `_oauth.py`'s `OAuthAccountService.complete_login`,
+        invoked once federated (Google/GitHub/Apple) identity has been
+        resolved and linked to a `UserRecord`. No credential is verified
+        here; that is entirely `OAuthAccountService`'s job before this is
+        ever called. Emits `auth.login` `outcome="success"`, `method="oauth"`
+        (when `events` is wired) so an audit trail can distinguish a
+        federated login from a password one via the SAME event name a
+        password login emits. Mirrors `login`'s own tail exactly -- a fresh
+        `family_id`, `_mint_and_persist` -- issuing the identical session/
+        token shape either path produces, which is the whole point: a
+        federated login is indistinguishable, downstream, from a password
+        one."""
+        if self._events is not None:
+            await self._events.emit("auth.login", actor=user.id, outcome="success", method="oauth")
+        family_id = uuid.uuid4().hex
+        return await self._mint_and_persist(user, family_id)
+
     async def _mint_and_persist(self, user: UserRecord, family_id: str) -> TokenPair:
         """Shared by `login` (new family) and `refresh` (existing family,
         rotation) -- mints a fresh access + refresh token pair, persists
