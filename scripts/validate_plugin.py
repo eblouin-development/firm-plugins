@@ -9,6 +9,7 @@ on every push and PR. Exits non-zero on any error.
 """
 import json
 import os
+import re
 import sys
 import glob
 
@@ -112,32 +113,182 @@ for path in skills:
     if not data.get("description"):
         err(f"{rel}: frontmatter missing 'description'")
 
-# 4. (warning) references should carry a metadata header for the freshness audit
+skill_names = {os.path.basename(os.path.dirname(p)) for p in skills}
+
+# 4. every ${CLAUDE_PLUGIN_ROOT}/... path referenced in skill bodies, shared
+#    docs, and references must resolve to a real file/dir under the plugin
+#    root — this is the hard-error version of what docs/SETUP-AND-USAGE.md
+#    used to self-declare "unverified". Deleting or renaming a referenced
+#    reference/shared-doc/template/asset now fails the gate.
+#
+#    Matching rule: capture the path segment after `${CLAUDE_PLUGIN_ROOT}/`
+#    up to the first character outside `[A-Za-z0-9_./-]` (backticks, spaces,
+#    sentence punctuation all fall outside that set, so no explicit
+#    "stop at backtick" logic is needed — it's implicit in the charset).
+#    A trailing "." or "/" picked up from a path that closes a sentence
+#    (e.g. "...at ${CLAUDE_PLUGIN_ROOT}/templates/monorepo/.") is stripped
+#    before resolving. Paths that are illustrative placeholders rather than
+#    literal targets (containing "<", ">", or an ellipsis, e.g.
+#    `${CLAUDE_PLUGIN_ROOT}/templates/<layer>/<name>`) are skipped.
+CLAUDE_PLUGIN_ROOT_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_./-]+)")
+PLACEHOLDER_MARKERS = ("<", ">", "…")
+ROOT_REF_GLOBS = [
+    os.path.join(PLUGIN, "skills", "**", "*.md"),
+    os.path.join(PLUGIN, "shared", "**", "*.md"),
+    os.path.join(PLUGIN, "references", "**", "*.md"),
+    os.path.join(PLUGIN, "templates", "**", "*.md"),
+]
+seen_root_refs = set()
+for pattern in ROOT_REF_GLOBS:
+    for path in glob.glob(pattern, recursive=True):
+        rel = os.path.relpath(path, ROOT)
+        try:
+            text = open(path, encoding="utf-8").read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for m in CLAUDE_PLUGIN_ROOT_RE.finditer(text):
+            target = m.group(1).rstrip(".").rstrip("/")
+            if not target or any(c in target for c in PLACEHOLDER_MARKERS):
+                continue
+            key = (path, target)
+            if key in seen_root_refs:
+                continue
+            seen_root_refs.add(key)
+            if not os.path.exists(os.path.join(PLUGIN, target)):
+                err(f"{rel}: dangling reference "
+                    f"'${{CLAUDE_PLUGIN_ROOT}}/{target}' — target does not exist")
+
+# 5. skill-name mentions in skill bodies must resolve to a real skill
+#    directory, catching the `web-proposal-writer`-style dead link before it
+#    ships. Matching rule (deliberately narrow, to avoid flagging ordinary
+#    prose words that happen to sit in backticks — CLI flags, package names,
+#    model names, etc.):
+#      (a) a backtick-quoted lowercase-kebab token immediately followed by
+#          the word "skill"/"skills" (optionally through a possessive "'s"),
+#          e.g. `` `design-system` skill `` or `` `frontend`'s skill ``.
+#      (b) the object of explicit handoff phrasing: "hand off to `X`" /
+#          "handoff to `X`".
+#    Anything else backticked is left alone — this is a precision-first
+#    heuristic; it will not catch every prose reference to a skill; that's
+#    an accepted false-negative tradeoff to keep it from crying wolf.
+#    A small allowlist covers skills this plugin refers to that are shipped
+#    by the base Claude Code install / another plugin, not this one.
+EXTERNAL_SKILLS = {"docx", "pdf", "pptx", "xlsx", "humanizer", "ruthless-edit"}
+SKILL_MENTION_RES = [
+    re.compile(r"`([a-z][a-z0-9-]*)`(?:'s)?\s+skills?\b"),
+    re.compile(r"\b(?:hand off to|handoff to)\s+`([a-z][a-z0-9-]*)`"),
+]
+for path in skills:
+    rel = os.path.relpath(path, ROOT)
+    text = open(path, encoding="utf-8").read()
+    parts = text.split("---", 2)
+    body = parts[2] if len(parts) >= 3 else text
+    mentioned = set()
+    for pattern in SKILL_MENTION_RES:
+        for m in pattern.finditer(body):
+            mentioned.add(m.group(1))
+    for name in sorted(mentioned):
+        if name not in skill_names and name not in EXTERNAL_SKILLS:
+            err(f"{rel}: references nonexistent skill '{name}' "
+                f"(no plugins/dev-lifecycle/skills/{name}/, and not in the "
+                "known external-skill allowlist)")
+
+# 6. every template block / catalog component ships its docs/fragment.md
+#    (the documentation standard's "ships its doc" acceptance bar), and any
+#    `versions-pinned-to:` pointer in its README resolves to a real file.
+#    Block/component roots are identified by known catalog anchor points,
+#    NOT by scanning every README.md under templates/ recursively — that
+#    would wrongly demand a fragment from implementation-internal
+#    sub-modules (e.g. templates/infra/aws-fargate/modules/ecr, a Terraform
+#    submodule of the aws-fargate block with its own README but no
+#    independent catalog entry) and from templates/monorepo (the
+#    scaffolding skeleton, whose own README.md doubles as its fragment per
+#    its frontmatter's `exposes` list — confirmed by reading it).
+#    `versions-pinned-to` values are a fixed pointer resolved against the
+#    plugin root, not the block's own directory — every block at every
+#    nesting depth writes the same unqualified `references/compatibility-
+#    matrix.md`, never a `../../..`-relative path (see templates/_TEMPLATE-
+#    README.md, the authoring spec for this field).
+BLOCK_ROOT_GLOBS = [
+    os.path.join(PLUGIN, "templates", "backend", "*"),
+    os.path.join(PLUGIN, "templates", "frontend", "*"),
+    os.path.join(PLUGIN, "templates", "mobile", "*"),
+    os.path.join(PLUGIN, "templates", "infra", "*"),
+    os.path.join(PLUGIN, "templates", "worker", "*"),
+    os.path.join(PLUGIN, "templates", "packages", "*"),
+    os.path.join(PLUGIN, "templates", "components", "*"),
+    os.path.join(PLUGIN, "templates", "components", "*", "*"),
+]
+VERSIONS_PINNED_RE = re.compile(r"^versions-pinned-to:\s*(\S+)", re.MULTILINE)
+block_roots = set()
+for pattern in BLOCK_ROOT_GLOBS:
+    for d in glob.glob(pattern):
+        if os.path.isfile(os.path.join(d, "README.md")):
+            block_roots.add(d)
+for d in sorted(block_roots):
+    rel_dir = os.path.relpath(d, ROOT)
+    if not os.path.isfile(os.path.join(d, "docs", "fragment.md")):
+        err(f"{rel_dir}: block/component is missing its docs/fragment.md")
+    readme_path = os.path.join(d, "README.md")
+    readme_text = open(readme_path, encoding="utf-8").read()
+    m = VERSIONS_PINNED_RE.search(readme_text)
+    if m:
+        pin_target = m.group(1)
+        if not os.path.isfile(os.path.join(PLUGIN, pin_target)):
+            err(f"{rel_dir}/README.md: versions-pinned-to target "
+                f"'{pin_target}' does not exist")
+
+# 7. references and template blocks should carry a `last-verified` metadata
+#    header for the freshness audit. Read the WHOLE file rather than a
+#    byte-capped head — a fixed byte cap silently misses a header that sits
+#    lower in a longer file (e.g. behind a long `needs`/`exposes` list),
+#    which is exactly the false-negative class this hardening pass closes.
+#    Missing `last-verified` is promoted from warning to ERROR for any file
+#    whose header declares `provenance: manual` — a manually-authored file
+#    has no automated process to fall back on for freshness, so an absent
+#    header there is a real gap, not just a nice-to-have. Auto-generated
+#    provenance (or no provenance field at all) stays a warning: those files
+#    may be regenerated by tooling that doesn't yet stamp the header, and
+#    flagging them as a hard gate would be premature until that's true of
+#    every generator (none of the current repo's files hit this warning
+#    path today, but the distinction is kept lenient on purpose).
+#    `_`-prefixed files are schema exemplars (e.g. _TEMPLATE-README.md) and
+#    are skipped. `docs/fragment.md` files are skipped: the canonical
+#    fragment format is machine-consumed (a single `<!-- fragment: ... -->`
+#    header line, no metadata slot — see references/authoring/
+#    documentation-standard.md); freshness for a block/component is carried
+#    by its README, which does carry `last-verified`.
+PROVENANCE_MANUAL_RE = re.compile(r"^provenance:\s*manual\b", re.MULTILINE)
+
+
+def check_last_verified(path):
+    rel = os.path.relpath(path, ROOT)
+    try:
+        text = open(path, encoding="utf-8").read()
+    except (UnicodeDecodeError, OSError):
+        return
+    if "last-verified:" in text:
+        return
+    if PROVENANCE_MANUAL_RE.search(text):
+        err(f"{rel}: no 'last-verified' metadata header "
+            "('provenance: manual' requires one)")
+    else:
+        warn(f"{rel}: no 'last-verified' metadata header")
+
+
 for path in glob.glob(os.path.join(PLUGIN, "references", "**", "*.md"), recursive=True):
     if os.path.basename(path).startswith("_"):
         continue
-    head = open(path).read(1000)
-    if "last-verified:" not in head:
-        warn(f"{os.path.relpath(path, ROOT)}: no 'last-verified' metadata header")
+    check_last_verified(path)
 
-# 4a. (warning) same freshness/header check for real template blocks, once they
-#     exist. `_`-prefixed files are schema exemplars (e.g. _TEMPLATE-README.md)
-#     and are skipped, matching the references check above. `docs/fragment.md`
-#     files are also skipped: the canonical fragment format is machine-consumed
-#     (single `<!-- fragment: ... -->` header line, no metadata slot — see
-#     references/authoring/documentation-standard.md); freshness for a block or
-#     component is carried by its README, which does carry `last-verified`.
-#     The glob is empty-dir safe.
 for path in glob.glob(os.path.join(PLUGIN, "templates", "**", "*.md"), recursive=True):
     if os.path.basename(path).startswith("_"):
         continue
     if path.endswith(os.path.join("docs", "fragment.md")):
         continue
-    head = open(path).read(1000)
-    if "last-verified:" not in head:
-        warn(f"{os.path.relpath(path, ROOT)}: no 'last-verified' metadata header")
+    check_last_verified(path)
 
-# 5. no hardcoded personal handle in SHARED skill/workflow text. This repo's
+# 8. no hardcoded personal handle in SHARED skill/workflow text. This repo's
 #    own CLAUDE.md and .github/pull_request_template.md are allowed to keep a
 #    literal `cc @<handle>` convention (it's genuinely this repo's owner and
 #    the README documents the substitution on rename); everything that ships
