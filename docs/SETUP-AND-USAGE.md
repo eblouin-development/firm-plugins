@@ -56,8 +56,8 @@ The blanked `attribution` is what keeps Claude out of commit/PR bylines on guest
 
 ### 4. Secrets for the automations
 The firm authenticates with a Claude subscription token (OAuth), not an Anthropic API key.
-- **Plugin repo:** add `CLAUDE_CODE_OAUTH_TOKEN` as a repo secret so the freshness audit can run. Install the Claude GitHub App on it if you want the plugin repo to dogfood the pipeline too.
-- **Each owned project repo:** the `scaffolding`/`onboarding` skills set `CLAUDE_CODE_OAUTH_TOKEN` for you (`gh secret set`) when wiring the pipeline; you just install the Claude GitHub App once. No `ANTHROPIC_API_KEY` anywhere.
+- **Plugin repo:** add `CLAUDE_CODE_OAUTH_TOKEN` as a repo secret so the scheduled freshness and coverage audits can run. No `ANTHROPIC_API_KEY` anywhere.
+- **Each owned project repo:** work is picked up and built through the interactive `coding-session` skill — there's no per-repo Action secret to wire.
 
 ---
 
@@ -66,7 +66,7 @@ The firm authenticates with a Claude subscription token (OAuth), not an Anthropi
 ### A repo you own → `scaffolding`
 > "Scaffold this repo" / "set up a new project for X"
 
-It detects (or defaults to Python back / TypeScript front), lays down structure and tooling, writes a **lean `CLAUDE.md`** (the thing that keeps every later task cheap), and wires the pipeline: the Claude Action (from the firm's workflow templates — plugin loaded and OAuth auth), CI gates, branch protection requiring CI + a review, and a committed `.claude/settings.json` the cloud/Action agents inherit. Scaffolding now **composes a runnable monorepo** from the starter kit in the same pass — blocks, catalog components, and their doc fragments, not just bare structure — see `docs/STARTER-KIT.md` for the full catalog.
+It detects (or defaults to Python back / TypeScript front), lays down structure and tooling, writes a **lean `CLAUDE.md`** (the thing that keeps every later task cheap), and wires the pipeline: CI gates, branch protection requiring CI + a review, and a committed `.claude/settings.json` the cloud sessions and scheduled-audit Actions inherit. Work is picked up and built exclusively through the interactive `coding-session` skill — there is no GitHub Action to wire per repo. Scaffolding now **composes a runnable monorepo** from the starter kit in the same pass — blocks, catalog components, and their doc fragments, not just bare structure — see `docs/STARTER-KIT.md` for the full catalog.
 
 ### A repo you don't own → `onboarding` (guest mode)
 > "Onboard this client repo without touching it"
@@ -81,7 +81,7 @@ Zero footprint: local config goes in untracked files excluded via `.git/info/exc
 1. **`technical-proposal`** — "What should we build this with, and what will it take?" Recommends the stack + architecture, justifies it, and gives an honest cost/timeline. The build/no-build decision.
 2. **`scaffolding`** — creates and initializes the repo (`gh repo create`, structure, tooling, lean `CLAUDE.md`, pipeline wiring). This is what gives `product-planning` a place to file its epic.
 3. **`product-planning`** — "Plan out the whole product." Produces the north star: vision, architecture/stack decisions, and a **staged roadmap** as a GitHub **epic + milestones + an ADR** in the repo. It stops there — no build.
-4. **Per stage**, repeat: **`planning`** reads the epic + the stage stub, you go back and forth until you approve, then it files the stage issue as a **sub-issue of the epic** (with an `Epic: #<n>` marker and the issue number on the epic's checklist line) under its milestone and tags **`@claude`**. The build agent implements and opens a PR → the **review agent** reviews and **routes the outcome**: clear blocker/high fixes get handed to **`@claude`** to implement automatically (which re-triggers the review, converging when clean), while a clean review or any finding that needs your decision pings **you** — so you're only pulled in when there's a call to make → **CI** runs → **you merge**. On merge the stage issue closes, and the **epic-checkoff** workflow ticks its box in the epic (and GitHub's native sub-issue rollup advances the epic's progress bar) — so the roadmap stays current without you touching it. Then **`devops`** deploys (a home beta server, or your chosen target) → next stage.
+4. **Per stage**, repeat: **`planning`** reads the epic + the stage stub, you go back and forth until you approve, then it files the stage issue as a **sub-issue of the epic** (with an `Epic: #<n>` marker and the issue number on the epic's checklist line) under its milestone. You then hand that issue to a **`coding-session`**, which builds it step by step on one branch, reviews each step internally, and — when the final whole-PR review is clean — flips the PR to ready and pings **you** to review, sign off, and **merge**. On merge the stage issue closes, and the **epic-checkoff** workflow ticks its box in the epic (and GitHub's native sub-issue rollup advances the epic's progress bar) — so the roadmap stays current without you touching it. Then **`devops`** deploys (a home beta server, or your chosen target) → next stage.
 
 Because every stage plan references the epic and ADR, the whole product stays aligned to the north star.
 
@@ -92,16 +92,16 @@ Because every stage plan references the epic and ADR, the whole product stays al
 > It adds the markers and numbers, links the sub-issues, and ticks any stage that's already merged. Idempotent, so re-running is safe.
 
 ### A feature or fix on an existing repo
-1. **`planning`** — talk it through; on your approval it files the issue and tags `@claude` (owned repos) or hands it to you to run (guest repos).
-2. Build agent → PR → review agent (auto-routes: clear fixes back to `@claude`, a clean pass or a needed decision to you) → CI → **you merge**.
+1. **`planning`** — talk it through; on your approval it files the issue.
+2. **`coding-session`** picks up the issue and runs the whole loop from an interactive thread using local subagents — it scopes (or picks up the epic/issue), marks it in-progress, then builds the whole feature self-directed: steps land as commits on one branch under one draft PR, each reviewed internally before the next, with a decision log kept as it goes. You're in the loop at scope approval (where you also approve any mid-build checkpoints — manual test gates, known decision points; default none), at genuine escalations, and at the end, when a clean whole-PR review flips the PR ready and it pings you with the decision log to review, sign off, and **merge**. One feature, one PR, no incremental merges.
 
-> **Prefer to conduct it live?** `coding-session` runs that same loop from an interactive thread using local subagents instead of the headless Action — it scopes (or picks up an epic/issue), marks it in-progress, then builds the whole feature self-directed: steps land as commits on one branch under one draft PR, each reviewed internally before the next, with a decision log kept as it goes. You're in the loop at scope approval (where you also approve any mid-build checkpoints — manual test gates, known decision points; default none), at genuine escalations, and at the end, when a clean whole-PR review flips the PR ready and it pings you with the decision log to review, sign off, and merge. One feature, one PR, no incremental merges. Don't run it *and* `@claude` on the same issue — that races two build agents.
+This is the only path — owned and guest repos both drive the build the same way, through a `coding-session`. There is no separate headless pipeline to hand off to.
 
 ### The one rule that never changes
 Agents plan, build, review, and get to green — **you approve the plan and you merge.** No agent ever merges.
 
 ### From any device / bad signal
-Once a task is dispatched, it runs server-side (a cloud sandbox or the GitHub Action) — independent of your connection. Kick it off, close the laptop, lose Starlink; it keeps going. Check status, review the diff, and merge from the Claude mobile app's remote-control panel or GitHub mobile. Heavier or private work can run on **your home server** over Tailscale and be reviewed the same way.
+Once a `coding-session` is dispatched to a cloud sandbox (Claude Code on the web), it runs server-side — independent of your connection. Kick it off, close the laptop, lose Starlink; it keeps going. Check status, review the diff, and merge from the Claude mobile app's remote-control panel or GitHub mobile. Heavier or private work can run on **your home server** over Tailscale and be reviewed the same way.
 
 ---
 
@@ -193,7 +193,7 @@ Commit a `.claude/settings.json` (which *does* carry into cloud sessions, unlike
 | Define/enforce design tokens | `design-system` |
 | Write product/UI copy | `copywriting` |
 | Write/deepen tests | `testing` |
-| Review a diff or run the PR review agent | `code-review` |
+| Review a diff or a pull request | `code-review` |
 | Containerize, wire CI, deploy (incl. a home server) | `devops` |
 | Provision & maintain hosts/infra (AWS, home, Tailscale) | `infrastructure` |
 | Keep dependencies current / patch a CVE | `dependency-maintenance` |
