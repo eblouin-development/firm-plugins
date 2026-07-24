@@ -1,11 +1,11 @@
 ---
 name: "design-system"
-description: "Establish and enforce a project's visual design system — the design tokens (color, typography, spacing, radii, shadows, breakpoints), component conventions, and accessibility standards that the frontend, tailwind, and material-ui work is written to defer to. Use this skill WHENEVER the work is about the system rather than one screen: \"set up the design system\", \"define our tokens/theme\", \"make the styling consistent\", \"what should our color/type scale be\", \"enforce the design standards\", or when new UI needs a token that doesn't exist yet. It detects and conforms to any system already present. It defines the standards; the frontend skill builds against them."
+description: "Establish and enforce a project's visual design system — the design tokens (color, typography, spacing, radii, shadows, breakpoints), component conventions, and accessibility standards that the frontend skill's work (including its Tailwind / MUI usage) is written to defer to. Use this skill WHENEVER the work is about the system rather than one screen: \"set up the design system\", \"define our tokens/theme\", \"make the styling consistent\", \"what should our color/type scale be\", \"enforce the design standards\", or when new UI needs a token that doesn't exist yet. It detects and conforms to any system already present. It defines the standards; the frontend skill builds against them."
 ---
 
 # Design system
 
-Own the project's visual language as a single source of truth, so every screen is consistent and no component hardcodes a color or a pixel. This skill defines and maintains the **tokens** and conventions; `frontend` (with `tailwind` / `material-ui`) builds against them, and `ui-exploration` feeds it new directions. It is the system, not the screens.
+Own the project's visual language as a single source of truth, so every screen is consistent and no component hardcodes a color or a pixel. This skill defines and maintains the **tokens** and conventions; `frontend` builds against them (see the `tailwind` / `material-ui` reference docs for the mechanics), and `ui-exploration` feeds it new directions. It is the system, not the screens.
 
 ## Core rules
 
