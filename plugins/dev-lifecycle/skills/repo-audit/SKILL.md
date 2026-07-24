@@ -53,6 +53,7 @@ Brief each subagent with: the repo/path (and guest-mode note if applicable), the
 One lane needs a slightly different brief than its solo invocation:
 
 - **`code-review` for whole-codebase quality.** `code-review`'s native unit is a diff. Brief this subagent explicitly to assess the codebase as a whole for correctness risk, DRYness/duplication, and structural quality — not to review a specific change — and to report findings in the same evidence-cited, file:line style the other lanes use.
+- **`dependency-maintenance` for audit-only.** `dependency-maintenance` is a remediation skill by charter — it can plan and apply upgrades and fix CVEs. Brief this subagent to inventory outdated/vulnerable packages and report only — no upgrades applied, so the lane holds this skill's read-only guarantee like every other.
 
 Independent lanes can run concurrently since they only read the repo. If the whole-repo scale signal from step 1 flagged the repo as large, consider batching lanes (e.g. security + deps first, then the rest) rather than firing all seven subagents at once, to keep the conductor's watchdog manageable.
 
