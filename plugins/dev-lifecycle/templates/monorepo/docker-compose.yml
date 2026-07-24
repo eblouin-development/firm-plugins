@@ -107,5 +107,61 @@ services:
   #   depends_on:
   #     - api
 
+  # --- Worker (uncomment once templates/worker/celery/ is scaffolded to
+  # apps/worker/) --------------------------------------------------------
+  # A shared Redis instance plus the worker + beat processes
+  # (templates/worker/celery/, epic #100). Uncomment ALL FOUR services
+  # together — redis, worker, and beat are a set, not independently
+  # optional once the block is scaffolded in. `db` above is reused as-is
+  # (the worker shares the SAME DATABASE_URL the api service uses); this
+  # section only adds what the worker block needs beyond that: a broker
+  # and its own two processes. Redis image pin per
+  # references/compatibility-matrix.md's "Containers" row (redis:8-bookworm).
+  # redis:
+  #   image: redis:8-bookworm
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - monorepo-redis-data:/data
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 10
+  #
+  # worker:
+  #   build:
+  #     context: ./apps/worker
+  #     dockerfile: Dockerfile
+  #     target: dev
+  #   environment:
+  #     DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+  #     CELERY_BROKER_URL: redis://redis:6379/0
+  #     ENVIRONMENT: development
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #
+  # beat:
+  #   build:
+  #     context: ./apps/worker
+  #     dockerfile: Dockerfile
+  #     target: dev
+  #   environment:
+  #     DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+  #     CELERY_BROKER_URL: redis://redis:6379/0
+  #     ENVIRONMENT: development
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   # EXACTLY ONE beat replica — never scale this service (two beats
+  #   # double-fire every scheduled task; see the worker block's README).
+  #   command: celery -A app.celery_app beat --loglevel=INFO
+
 volumes:
   monorepo-db-data:
+  # monorepo-redis-data:   # uncomment alongside the `redis` service above

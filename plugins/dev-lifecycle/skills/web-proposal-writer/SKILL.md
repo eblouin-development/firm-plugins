@@ -57,3 +57,5 @@ Produce the proposal as markdown. If the client needs a polished document, use t
 
 ## Handoff
 Comes from `technical-proposal` once a build is recommended and the engineering substance is settled. If the pitch surfaces a client question that changes the technical scope, send it back to `technical-proposal` rather than resolving it here.
+
+**Where you sit in the chain:** discovery → technical-proposal → web-proposal-writer → product-planning → planning.

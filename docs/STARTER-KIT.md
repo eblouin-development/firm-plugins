@@ -22,7 +22,7 @@ The full model — the doc fragment format, the root README's aggregation-marker
 
 ## 3. Blocks
 
-Each block lives at `plugins/dev-lifecycle/templates/<layer>/<name>/` and declares a `needs`/`exposes` composition contract in its own `README.md` header. Backend blocks are alternatives (a project picks one); frontend/mobile/infra blocks compose alongside each other.
+Each block lives at `plugins/dev-lifecycle/templates/<layer>/<name>/` and declares a `needs`/`exposes` composition contract in its own `README.md` header. Backend blocks are alternatives (a project picks one); frontend/mobile/infra/worker blocks compose alongside each other and alongside whichever backend was chosen.
 
 | Block | Materializes to | Needs (short) | Exposes (short) |
 |---|---|---|---|
@@ -32,6 +32,7 @@ Each block lives at `plugins/dev-lifecycle/templates/<layer>/<name>/` and declar
 | `frontend/nextjs` | `apps/web` | Same as `vite-spa`, `NEXT_PUBLIC_API_BASE_URL` in place of the Vite env var | The Next.js App Router app (`.next/standalone` + statically-rendered public routes) |
 | `frontend/nextjs-admin` | `apps/admin` | `@repo/api-client` + `@repo/web-shared`, the backend's `admin` role/claim, identical deps to `frontend/nextjs` | `apps/admin` — a SECOND, standalone Next.js app whole-app-gated on `admin`, its own container/subdomain |
 | `mobile/expo` | `apps/mobile` | `EXPO_PUBLIC_API_BASE_URL`, `@repo/api-client` in bearer mode, `expo-secure-store` | An Expo Router React Native app wired to the standard `justfile` targets |
+| `worker/celery` | `apps/worker` | A backend block already in `apps/api`, `DATABASE_URL` (shared with it), `CELERY_BROKER_URL` (Redis) | The Celery app, idempotent/retryable task conventions, a beat scheduler, and the `enqueue()`/`TaskName` seam either backend block copies in to dispatch work |
 | `infra/aws-fargate` | `infra/aws-fargate` | A built + pushed app image, AWS OIDC credentials, ACM cert ARN(s), Terraform ~>1.15 | ECS Fargate service behind an HTTPS ALB, CloudFront static site, private RDS Postgres, Secrets Manager, a least-privilege OIDC deploy role |
 | `packages/api-client` | `packages/api-client` | An OpenAPI 3.1 schema to generate from; consumers supply `react` + `@tanstack/react-query` as peers | `@repo/api-client` — typed React Query hooks/models (orval-generated) |
 
@@ -74,21 +75,24 @@ Lighter drop-in slices at `plugins/dev-lifecycle/templates/components/<domain>/`
 
 ## 5. Recipes
 
-Thirteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
+Sixteen feature recipes at `plugins/dev-lifecycle/references/recipes/`, plus `_RECIPE-TEMPLATE.md`, the schema exemplar `recipe-author` fills to add a new one.
 
 | Recipe | What it wires |
 |---|---|
+| `analytics.md` | A new `AnalyticsSink` seam (mirroring `EmailSender`) for server-side event capture, a minimal typed event taxonomy, and a consent-gated, privacy-respecting web-analytics default across nextjs/vite-spa/expo and fastapi/django |
 | `audit-logging.md` | The `audit-logging` component into a feature's auth/admin/restricted-data actions |
-| `background-jobs.md` | Celery + Redis (Django) or `BackgroundTasks` (FastAPI, light fire-and-forget) for async work off the request path |
+| `background-jobs.md` | The `worker/celery` block (either backend track) for retryable/scheduled/durable async work, plus `BackgroundTasks` (FastAPI, light fire-and-forget) for work that can afford to be lost |
 | `caching.md` | Redis cache-aside — read-through, explicit TTL, write invalidation, leak-safe key naming |
 | `data-export.md` | A streamed CSV/report export endpoint reusing an existing list endpoint's query and authorization scoping |
 | `end-to-end-auth.md` | The `auth` component across backend (fastapi/django), web (cookie mode), and mobile (bearer mode) into one contract |
 | `feature-flags.md` | Env-backed flags via `settings` for deploy-time toggles, plus a DB-backed table for redeploy-free flags, default-off |
 | `file-upload-s3.md` | Direct-to-S3 upload via a server-minted presigned URL — the server never receives the file body |
 | `gdpr-data-rights.md` | Subject-access export, right-to-erasure (grace period, hard-delete vs. anonymize-in-place), and a cookie-consent gate — reusing `auth`'s `SingleUseTokenService`, `background-jobs`, `transactional-email`, and `audit-logging` |
+| `llm-features.md` | A backend Anthropic-backed LLM service layer — typed schemas, SSE streaming, retries/timeouts, server-only key custody, per-user rate/budget/output caps, and an explicit prompt-injection posture |
 | `push-notifications.md` | Expo push tokens + `expo-notifications` to a backend device-token registration endpoint and Expo's push service (a capability the kit doesn't ship yet — the recipe adds it) |
 | `realtime-websockets.md` | FastAPI's native `WebSocket` endpoint, authenticated at handshake, with a Redis pub/sub fan-out path for multi-process deployments |
 | `search.md` | PostgreSQL full-text search (`tsvector`/`tsquery` + GIN index) wired to an existing model and the `Page[T]` envelope |
+| `seo-meta-sitemap.md` | Per-route metadata, `sitemap.xml`, `robots.txt`, OG/Twitter cards, and JSON-LD into `frontend/nextjs` (Metadata API) and `backend/django` (server-rendered `<head>` + `django.contrib.sitemaps`), with `frontend/vite-spa`'s CSR indexing/social-preview limits stated honestly rather than papered over |
 | `stripe-payments.md` | Stripe Elements/Checkout to the kit's payments-security baseline — tokenized cards, verified webhooks, idempotent mutations, exact decimal money, full audit trail |
 | `transactional-email.md` | The `auth` component's `EmailSender` abstraction for verification/reset mail and any other transactional send |
 

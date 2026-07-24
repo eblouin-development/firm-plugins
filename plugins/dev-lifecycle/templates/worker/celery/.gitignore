@@ -1,0 +1,16 @@
+# This block's own .gitignore — layered on top of the repo root's
+# .gitignore (which already covers __pycache__/, *.pyc, .pytest_cache/,
+# .venv/). Entries here are specific to this worker block's own
+# uv-managed artifacts, matching backend/django's identical convention.
+
+# No uv.lock is committed for this template (README.md's "Composition
+# contract": Python 3.13.x + uv, deps pinned in pyproject.toml, no
+# lockfile shipped) — `uv sync`/`uv run` regenerate one locally, which
+# otherwise keeps showing up as untracked.
+uv.lock
+
+# Celery's default file-based PersistentScheduler's on-disk shelve file
+# (celery_app.py wires no explicit --schedule path) — a local dev
+# artifact, never committed.
+celerybeat-schedule
+celerybeat.pid

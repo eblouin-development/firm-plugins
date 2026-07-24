@@ -36,22 +36,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # github.event.repository is only populated on repository-scoped
+      # events — this workflow's primary trigger is `schedule`, which does
+      # NOT populate it, so deriving the bare repo name from that context
+      # silently degrades to an empty string on every scheduled run
+      # (workflow_dispatch masks it, since manual dispatch does populate
+      # it). $GITHUB_REPOSITORY is always `owner/repo` on every event.
+      - name: Resolve marketplace repo name
+        id: mp
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       - name: Coverage audit
         uses: anthropics/claude-code-action@v1
         env:
           # Read-only token for the (mostly private) fleet repos. Used ONLY by
           # the prompt's `gh`/API reads below — deliberately NOT wired as the
-          # action's `github_token`, so opening the PR back to eblouin-plugins
+          # action's `github_token`, so opening the PR back to this repo
           # stays on the job's own least-privilege GITHUB_TOKEN (contents +
           # pull-requests write, THIS repo only). Keeping the two separate means
-          # the fleet token never has write power on eblouin-plugins.
+          # the fleet token never has write power on this repo.
           FLEET_READ_TOKEN: ${{ secrets.FLEET_READ_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: |
-            https://github.com/eblouin-development/eblouin-plugins.git
+            https://github.com/${{ github.repository }}.git
           plugins: |
-            dev-lifecycle@eblouin-plugins
+            dev-lifecycle@${{ steps.mp.outputs.name }}
           claude_args: "--model claude-sonnet-5"
           prompt: |
             Audit the reference library in plugins/dev-lifecycle/references/
@@ -67,7 +77,7 @@ jobs:
                applies) by reading the fleet repo with the FLEET_READ_TOKEN env
                var, e.g. `GH_TOKEN="$FLEET_READ_TOKEN" gh api
                repos/<owner>/<repo>/contents/<manifest>`. Use that token ONLY
-               for reading fleet repos — the PR back to eblouin-plugins uses the
+               for reading fleet repos — the PR back to this repo uses the
                workflow's own token, not this one. If a private repo is
                unreachable (token lacks access or the secret is unset), note it
                and skip it; do not fail the run.
@@ -92,10 +102,10 @@ jobs:
                "Coverage audit: add N reference(s)". In the body, list each new
                reference with the repos that drove it and the versions covered,
                note any repos skipped for access, list deferred gaps, and add a
-               line `cc @eblouin876` (repo convention — the owner is tagged on
-               every PR).
+               line `cc @${{ github.repository_owner }}` (repo convention —
+               the owner is tagged on every PR).
 
             If there are NO gaps, do not open a PR — finish without changes.
             Do not modify or "refresh" existing references here; staleness is
             freshness-audit's job. Never commit anything to the fleet repos —
-            this job only reads them and only writes to eblouin-plugins.
+            this job only reads them and only writes to this repo.

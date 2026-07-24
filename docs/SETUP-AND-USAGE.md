@@ -141,11 +141,13 @@ There are two independent knobs; use the one that matches the scope:
 Fix the environment's **setup script** so it actually upgrades. `add`/`install` alone don't — add the `update` commands:
 
 ```bash
-claude plugin marketplace add eblouin-development/eblouin-plugins || true
-claude plugin marketplace update eblouin-plugins        # pull marketplace → latest main
-claude plugin install dev-lifecycle@eblouin-plugins || true
-claude plugin update dev-lifecycle@eblouin-plugins       # upgrade the installed plugin
+claude plugin marketplace add <owner>/<repo> || true
+claude plugin marketplace update <repo>        # pull marketplace → latest main
+claude plugin install dev-lifecycle@<repo> || true
+claude plugin update dev-lifecycle@<repo>       # upgrade the installed plugin
 ```
+
+(Substitute `<owner>/<repo>` with the actual account and repo hosting the marketplace — `eblouin-development/eblouin-plugins` for this repo, unrenamed.)
 
 Editing the setup script **is** what un-sticks the current stale snapshot (it forces one rebuild). This is the low-effort fleet-wide fix: **you do not copy anything per-repo** — every project that runs in that default environment picks up the new version, with staleness bounded to the ~7-day cache window.
 

@@ -33,7 +33,7 @@ Python client idioms for Redis via the `redis` package (sync `redis.Redis` and a
 - **redis-py 8.0 defaults to RESP3 on the wire** but keeps legacy RESP2 Python response shapes, so existing code is unaffected. Pin `protocol=2` to force RESP2, or `legacy_responses=False` for unified shapes. Firm apps pin `redis>=5.0` — treat 5.x–8.x as one API surface.
 
 ## Sync vs async client
-- Match the app's concurrency model. FastAPI async paths (`schwab_trader`) → `redis.asyncio.Redis`, `await` every call. Sync Django/Celery → `redis.Redis`.
+- Match the app's concurrency model. FastAPI async paths → `redis.asyncio.Redis`, `await` every call. Sync Django/Celery → `redis.Redis`.
 - **Never call the sync client on an async event loop** — it blocks. Never share one client across both models.
 
 ## Connection pooling & decode_responses

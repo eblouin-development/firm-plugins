@@ -5,8 +5,8 @@
   // <project>/apps/web/ (the pnpm-workspace `apps/*` glob), so this
   // "extends" path is written for the materialized location — two levels up
   // from apps/web/ to the project root — NOT for where this file sits in the
-  // eblouin-plugins repo. Same convention as @repo/api-client, @repo/web-shared,
-  // and the Vite SPA block; don't "fix" it to be eblouin-plugins-relative.
+  // plugin marketplace repo. Same convention as @repo/api-client, @repo/web-shared,
+  // and the Vite SPA block; don't "fix" it to be relative to the plugin marketplace repo.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     // The base pins Node-executed `module`/`moduleResolution` (NodeNext),
