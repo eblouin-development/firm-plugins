@@ -3,7 +3,7 @@ recipe: push-notifications
 applies-to:
   - mobile block: templates/mobile/expo (the Expo push token + expo-notifications wiring)
   - backend block: fastapi OR django (the device-token registration endpoint + the Expo push service call — NEW, not yet in the kit; see "What the kit does not provide")
-last-verified: 2026-07-23
+last-verified: 2026-07-24
 provenance: manual
 sources:
   - https://docs.expo.dev/push-notifications/overview/
@@ -34,7 +34,7 @@ It **composes what already exists** and is explicit about what it adds:
 - **`templates/mobile/expo`** — the existing Expo block this recipe extends: its `AuthProvider`/`authApi.ts` pattern (a thin generated-client adapter feeding a framework-free engine) is the shape a new `pushApi.ts`/token-registration call follows, and its bearer-mode `@repo/api-client` is the transport the registration call reuses — no new HTTP client.
 - **`references/mobile/native-modules.md`** — names `expo-notifications` explicitly as one of the "Expo SDK modules... first-party, version-governed by the SDK" (its "Three tiers of native dependency" section, tier 1) and states the install convention (`npx expo install expo-notifications`, never `pnpm add`, so the SDK-57-compatible version resolves). This is the kit's only existing mention of push notifications anywhere — a name-check in a tiers list, not a wired component. This recipe is what actually wires it.
 - **The existing auth component** (`templates/components/security/auth/`) — the device-token registration endpoint is an authenticated route like any other, gated the same way (`Depends(get_current_principal)` on FastAPI, the equivalent on Django) — no new auth mechanism.
-- **The `background-jobs` recipe** — sending to Expo's push API is a network call that should not block the request that triggers it (an order shipped, a comment reply) — dispatch it through the same Celery task (Django) or `BackgroundTasks`/task-queue path (FastAPI) that recipe already wires, rather than awaiting it inline in a request handler.
+- **The `background-jobs` recipe** — sending to Expo's push API is a network call that should not block the request that triggers it (an order shipped, a comment reply) — dispatch it through the `worker/celery` task path (`templates/worker/celery/`) that recipe wires for both backend tracks, rather than awaiting it inline in a request handler.
 
 ## What the kit does not provide (read this first)
 None of the following exist in this kit as of this recipe's `last-verified` date — this recipe's wire-up steps below are instructions for **adding** each of them, not for wiring an existing component:
@@ -78,11 +78,11 @@ Don't cite any of the above as already wired. A build agent applying this recipe
 1. **Add a `DeviceToken` model** — `user_id` (FK), `expo_push_token` (string, unique per token), `platform` (optional), timestamps — built on the same `db-mixins`/`repository` catalog components every other model in the kit already uses. One user can have several tokens (multiple devices); a token should be unique across the table (re-registering the same token, e.g. on re-login, upserts rather than duplicates).
 2. **Add an authenticated registration endpoint** (`POST /push/devices` or similar), gated by `Depends(get_current_principal)` (FastAPI) / the equivalent on Django — exactly the auth component's existing dependency, no new auth mechanism. The endpoint upserts `(user_id, expo_push_token)`. Add a matching delete/deactivate endpoint for logout (see mobile step 4).
 3. **Validate the token shape before storing it** — an Expo push token has a known format (`ExponentPushToken[...]` or a UUID-based `ExpoPushToken[...]` variant); reject anything that doesn't match rather than storing arbitrary client-supplied strings that will later be sent, unchecked, to Expo's API.
-4. **Send via Expo's push API, dispatched through the background-jobs recipe's task path — never inline in the triggering request.** Add `expo-server-sdk` (Python) as a new dependency (or call Expo's REST endpoint directly with `httpx`/`requests` if the project prefers no extra dependency — the API is a plain authenticated-by-nothing-but-your-own-tokens JSON POST):
+4. **Send via Expo's push API, dispatched through the background-jobs recipe's `worker/celery` task path — never inline in the triggering request.** Add `expo-server-sdk` (Python) as a new dependency (or call Expo's REST endpoint directly with `httpx`/`requests` if the project prefers no extra dependency — the API is a plain authenticated-by-nothing-but-your-own-tokens JSON POST):
    ```python
-   # Dispatched via Celery (.delay()) on the Django track, or the FastAPI
-   # track's task-queue path per the background-jobs recipe — not awaited
-   # inline in the request that triggers the notification.
+   # Dispatched via the worker/celery block's idempotent_task() +
+   # enqueue() seam (background-jobs recipe) — not awaited inline in the
+   # request that triggers the notification.
    from exponent_server_sdk import PushClient, PushMessage
 
    def send_push(user_id: str, title: str, body: str, data: dict | None = None) -> None:
