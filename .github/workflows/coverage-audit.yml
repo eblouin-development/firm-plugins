@@ -36,6 +36,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # github.event.repository is only populated on repository-scoped
+      # events — this workflow's primary trigger is `schedule`, which does
+      # NOT populate it, so deriving the bare repo name from that context
+      # silently degrades to an empty string on every scheduled run
+      # (workflow_dispatch masks it, since manual dispatch does populate
+      # it). $GITHUB_REPOSITORY is always `owner/repo` on every event.
+      - name: Resolve marketplace repo name
+        id: mp
+        run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
       - name: Coverage audit
         uses: anthropics/claude-code-action@v1
         env:
@@ -51,7 +61,7 @@ jobs:
           plugin_marketplaces: |
             https://github.com/${{ github.repository }}.git
           plugins: |
-            dev-lifecycle@${{ github.event.repository.name }}
+            dev-lifecycle@${{ steps.mp.outputs.name }}
           claude_args: "--model claude-sonnet-5"
           prompt: |
             Audit the reference library in plugins/dev-lifecycle/references/
