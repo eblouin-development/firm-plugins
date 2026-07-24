@@ -1,12 +1,15 @@
 <!--
 library: djangorestframework
-versions-covered: "DRF 3.x on Django 5.x"   # DRF 3.17.1, verified against Django 4.2–6.0 / Python 3.10+
-last-verified: 2026-07-12
-provenance: auto-generated (pending review)
+versions-covered: "DRF 3.17.x on Django 5.2 LTS"   # DRF 3.17.1, verified against Django 4.2–6.0 / Python 3.10+; pins per compatibility-matrix.md "Backend — Django track"
+last-verified: 2026-07-24
+provenance: manual
 sources:
-  - https://www.django-rest-framework.org/
   - https://pypi.org/project/djangorestframework/
+  - https://pypi.org/pypi/djangorestframework/json
   - https://github.com/encode/django-rest-framework/releases
+  - https://pypi.org/project/drf-spectacular/
+  - https://pypi.org/pypi/drf-spectacular/json
+  - https://raw.githubusercontent.com/encode/django-rest-framework/master/docs/api-guide/views.md
 -->
 
 # Django REST Framework conventions
