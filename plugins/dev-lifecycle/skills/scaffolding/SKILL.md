@@ -12,6 +12,7 @@ The highest-leverage thing this skill produces is a lean `CLAUDE.md`: the one ar
 ## Core rules
 
 - **Owned repos only.** This skill commits infrastructure into the repo. If the repo isn't yours to commit to, stop and use the `onboarding` skill (guest mode), which sets everything up without a footprint.
+- **Greenfield only.** This skill composes the kit into a new or empty repo. Migrating an existing owned repo's app code onto the kit incrementally is `modernization`'s job, not scaffolding's.
 - **Detect before you generate — and compose before you hand-write.** Even "greenfield" often has a partial setup. Read what exists first and conform; don't overwrite a convention that's already there. When nothing exists yet, compose from the starter kit's `templates/`/`components/`/`references/recipes/` catalog rather than generating a monorepo, an auth flow, or a Dockerfile from scratch — the kit ships those already built, version-pinned, and secure-by-default.
 - **Right-size, don't over-engineer.** Match the actual stack and scale. A solo/freelance app gets Docker + a PaaS target and simple CI — not Kubernetes, multi-env promotion, or ceremony it won't use. (See `${CLAUDE_PLUGIN_ROOT}/references/devops/deploy-operate.md`.)
 - **Everything committed is deliberate.** The Action workflows, CI, branch protection, `.claude/settings.json`, and `CLAUDE.md` are the repo's contract with the pipeline. Never commit secrets.
