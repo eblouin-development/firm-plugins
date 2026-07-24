@@ -21,15 +21,19 @@ block's task code from the backend process (they're separate
 deployables — see `app/registry.py`'s own docstring).
 
 ## Deployment
-One worker image serves both the `worker` and `beat` processes (same
-Dockerfile, different `CMD`) — deploy **exactly one** `beat` replica
-(never scaled; two beats double-fire every scheduled task) and any number
-of `worker` replicas. `python -m app.health worker` / `python -m app.health
-beat` is this block's liveness probe (Celery has no HTTP server) — wire
-it as the container health check on whichever orchestrator runs this
-image (the Dockerfile's own `HEALTHCHECK` covers plain `docker run`/
-compose; an ECS task definition needs the same command wired into its own
-`healthCheck` block per `references/wiring/infra-app.md`).
+One Dockerfile serves both processes, via two DIFFERENT build stages —
+`prod` (default, worker) and `beat` — each with its own `HEALTHCHECK`
+(`python -m app.health worker` pings only this container's own node,
+never a sibling replica's; `python -m app.health beat` checks the local
+schedule file's freshness). Deploy **exactly one** `beat` replica (built
+with `--target beat`, never scaled — two beats double-fire every
+scheduled task) and any number of `worker` replicas (default `--target
+prod`, or no `--target` at all). Wire each process's own health command
+into the container health check on whichever orchestrator runs it — an
+ECS task definition needs the matching command in its own `healthCheck`
+block per `references/wiring/infra-app.md`; running the `prod` (worker)
+image unmodified as a beat deployment is a mistake — it carries the
+worker's probe, which beat will never satisfy.
 
 ## Secrets
 | `CELERY_BROKER_URL` | worker/celery | Required, no default — the Redis broker connection string both `WorkerSettings` (worker/beat processes) and the copied-in `registry.py` (backend producer process) read. Point it at the shared Redis instance (this block's own `docker-compose.yml` for standalone dev, or the monorepo root compose's shared `redis` service once wired in). |

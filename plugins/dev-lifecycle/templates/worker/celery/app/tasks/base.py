@@ -22,6 +22,8 @@ logger = get_task_logger(__name__)
 def idempotent_task(
     *,
     name: str | None = None,
+    # Deliberately broad by default (see the docstring's "autoretry_for
+    # defaults to (Exception,)" note below) — narrow it per task.
     autoretry_for: tuple[type[BaseException], ...] = (Exception,),
     max_retries: int = 5,
     retry_backoff: int = 5,
@@ -40,8 +42,19 @@ def idempotent_task(
       declarative exponential backoff with jitter on the given exception
       types, instead of hand-rolled try/except retry loops (celery.md's
       "Retries"). Defaults retry on any Exception with 5,10,20,...,600s
-      backoff, capped at 5 attempts — override per task when a narrower
-      exception set or different cadence is correct.
+      backoff, capped at 5 attempts.
+
+      **`autoretry_for` defaults to `(Exception,)` — this is intentionally
+      broad and a real project SHOULD narrow it per task.** A bare
+      `Exception` also catches genuine programming errors (a `TypeError`
+      from a bad argument, a `KeyError` from a malformed payload, an
+      unhandled edge case in the task body itself) — those are not
+      transient failures a retry will fix, and retrying one 5 times with
+      backoff just delays the failure being visible while doing
+      unnecessary work. Pass a narrower `autoretry_for` (e.g. the specific
+      network/timeout exceptions a task's own downstream call can raise)
+      once a task's real failure modes are known; this decorator's
+      "override per task" contract is exactly this override.
 
     Usage:
 

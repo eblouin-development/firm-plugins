@@ -11,9 +11,22 @@
 #            the container/process to pick up a code change, same as any
 #            other Python worker process; --autoreload-style tooling is
 #            deliberately not added here to avoid a dev-only dependency).
-# - `prod` — the hardened production image, and the LAST/default stage:
-#            a `docker build` with no `--target` builds this stage, so
-#            what ships and what trivy scans is always the hardened one.
+#            No HEALTHCHECK on this stage — nothing to get wrong here.
+# - `beat`  — hardened, same as `prod` below EXCEPT its own HEALTHCHECK
+#            (`python -m app.health beat`, not the worker probe) and CMD.
+#            NOT the default target — a real (non-compose) beat deployment
+#            (e.g. the infra block's ECS task definition) must build/pull
+#            this image with `--target beat` explicitly. docker-compose.yml
+#            in THIS repo uses `target: dev` for its `beat` service (no
+#            HEALTHCHECK either way — see above); this stage exists for a
+#            prod deployment path that builds the hardened image directly.
+# - `prod` — the hardened production WORKER image, and the LAST/default
+#            stage: a `docker build` with no `--target` builds this stage,
+#            so what ships and what trivy scans by default is always the
+#            worker image. A `beat` deployment must NOT run this image
+#            unmodified — it carries the worker's own liveness probe,
+#            which a beat process (not a worker) would never satisfy; use
+#            the `beat` stage above instead.
 #
 # Base image and uv version both per references/compatibility-matrix.md:
 # "Containers" (python:3.13-slim-bookworm, ghcr.io/astral-sh/uv:0.11.31) —
@@ -56,12 +69,26 @@ FROM base AS dev
 
 CMD ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO"]
 
-# --- prod: hardened, default/final stage ------------------------------------
+# --- beat: hardened, but with beat's OWN health check (not the worker's) ---
+FROM base AS beat
+
+# Checks the local beat-schedule file's mtime (app/health.py's
+# `_check_beat`), NOT a worker ping — a beat process is not a worker node
+# and would never answer either the old unscoped ping or the new
+# node-scoped one (app/health.py's `_check_worker`/`_local_nodename`).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD ["python", "-m", "app.health", "beat"]
+
+CMD ["celery", "-A", "app.celery_app", "beat", "--loglevel=INFO"]
+
+# --- prod: hardened, default/final stage (WORKER) ---------------------------
 FROM base AS prod
 
-# HEALTHCHECK targets the WORKER process by default; docker-compose.yml's
-# `beat` service overrides both CMD and this HEALTHCHECK's test to
-# `python -m app.health beat` — see app/health.py for both probes.
+# Pings ONLY this container's own node (app/health.py's `_check_worker`) —
+# never a sibling replica's, which matters because `worker` scales
+# horizontally on a shared broker (see app/health.py's module docstring
+# for why an unscoped ping would be a false-healthy result for a dead
+# replica).
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD ["python", "-m", "app.health", "worker"]
 

@@ -196,17 +196,33 @@ for.
 
 Celery ships no HTTP server for either process, so this block's liveness
 story is a CLI probe (`app/health.py`), wired into the Dockerfile's
-`HEALTHCHECK`:
+`HEALTHCHECK` — a DIFFERENT one per process, on DIFFERENT build stages
+(`prod` for worker, `beat` for beat — see Dockerfile's own header note):
 
-- **worker**: `celery -A app.celery_app inspect ping` against the local
-  process — exits 0 if it answers within 5s.
+- **worker**: pings ONLY this container's own node
+  (`celery@<hostname>` — Celery's default nodename scheme) — exits 0 if
+  THAT specific node answers within 5s. Deliberately NOT an unscoped
+  `inspect ping` (which broadcasts to and collects replies from every
+  worker on the shared broker): `worker` scales horizontally
+  (`docker compose up --scale worker=N`, all replicas on one broker), so
+  an unscoped ping would let a dead replica see a live sibling's reply
+  and report itself healthy — a false-healthy result the orchestrator
+  would never catch. See `app/health.py`'s module docstring for the full
+  rationale.
 - **beat**: checks the on-disk `celerybeat-schedule` file's mtime is
-  recent (beat has no broker-facing ping of its own).
+  recent (beat has no broker-facing ping of its own, and pinging a node
+  name at all would be meaningless for a process that isn't a worker).
 
-An orchestrator without Docker's own `HEALTHCHECK` mechanism (the infra
-block's ECS task definition) runs the same `python -m app.health
-{worker,beat}` command as its container health check — see
-`docs/fragment.md`'s "Deployment" section.
+Because the probe differs per process, **a `beat` deployment must build
+the Dockerfile's `beat` stage explicitly (`--target beat`)** — the
+default (`prod`) stage's `HEALTHCHECK` is the worker probe, which a beat
+process would never satisfy. `docker-compose.yml` in this block instead
+runs both processes off the `dev` stage (no `HEALTHCHECK` at all there —
+see Dockerfile), so this only matters for a real (non-compose)
+deployment path, e.g. the infra block's ECS task definition, which must
+wire `python -m app.health worker` / `python -m app.health beat` into
+each task definition's own `healthCheck` block matching which process it
+runs — see `docs/fragment.md`'s "Deployment" section.
 
 ## Dev run (Docker)
 
