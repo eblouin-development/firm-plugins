@@ -198,6 +198,7 @@ Commit a `.claude/settings.json` (which *does* carry into cloud sessions, unlike
 | Provision & maintain hosts/infra (AWS, home, Tailscale) | `infrastructure` |
 | Keep dependencies current / patch a CVE | `dependency-maintenance` |
 | Audit a whole project's security | `security-audit` |
+| Run every audit lane on a whole repo in one pass | `repo-audit` |
 | Seed data & build reports | `data` |
 | Write docs / ADRs / API reference | `documentation` |
 | Write a client status update, release notes, or handoff package | `client-comms` |
