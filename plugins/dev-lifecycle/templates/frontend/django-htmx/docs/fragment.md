@@ -31,13 +31,20 @@ from a catalog component, so the weekly freshness audit does not need to
 track drift against a source file the way `backend/django`'s own
 `core/security/` subpackages do. It DOES import the vendored
 `core.security.auth` component directly (`build_auth_service`,
-`resolve_access`, `set_auth_cookies`/`clear_auth_cookies`/
-`verify_double_submit`) — when that component's freshness-audit-tracked
-copy inside `backend/django` changes, re-verify `webapp/auth.py`'s
-`resolve_principal_from_cookie` and `webapp/middleware.py`'s
-`SilentRefreshMiddleware` still call it the same way (no signature
-changes expected, since both call the SAME public methods
-`core/views.py` already calls). Tailwind/htmx versions follow
+`resolve_access`, `read_refresh_cookie`, `verify_double_submit`, plus
+`_cookies.py`'s `build_refresh_cookie_kwargs`/`build_csrf_cookie_kwargs`/
+`clear_refresh_cookie_kwargs`/`clear_csrf_cookie_kwargs` — via
+`webapp/cookies.py`'s `Path=/`-overriding wrappers, NOT the `django.py`
+adapter's own `set_auth_cookies`/`clear_auth_cookies`, which stay
+`Path=/auth`-scoped and are only ever called by the JSON API track's
+`core/views.py` — see the block README's "Judgment calls" for why
+`webapp` needs its own cookie-setting path) — when that component's
+freshness-audit-tracked copy inside `backend/django` changes, re-verify
+`webapp/auth.py`'s `resolve_principal_from_cookie`,
+`webapp/middleware.py`'s `SilentRefreshMiddleware`, and
+`webapp/cookies.py` still call it the same way (no signature changes
+expected, since all three call the SAME public functions `core/views.py`
+already calls). Tailwind/htmx versions follow
 `references/compatibility-matrix.md`'s "Frontend — server-rendered
 (Django + HTMX)" section, not bumped independently of that pin.
 

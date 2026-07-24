@@ -170,8 +170,27 @@ sync-view/async-service posture. On success it sets THREE cookies:
 - `access_token` — **this block's ONE deliberate, NEW extension to the
   existing cookie set** (`HttpOnly; Secure; SameSite=Lax; Path=/`, TTL =
   `JWT_ACCESS_TTL_SECONDS`). See "Judgment calls" for why this is safe.
-- `refresh_token` / `csrf_token` — the EXISTING pair `set_auth_cookies`
-  already sets, reused verbatim, unchanged flags/`Path=/auth`.
+- `refresh_token` / `csrf_token` — the SAME `_cookies.py`-built pair the
+  JSON API track sets, but via `webapp/cookies.py`'s
+  `set_webapp_auth_cookies` — a thin, `webapp`-local wrapper that reuses
+  `_cookies.py`'s `build_refresh_cookie_kwargs`/`build_csrf_cookie_kwargs`
+  verbatim (same `httponly`/`secure`/`samesite="lax"`/`max_age`) but
+  overrides `path` to `/` instead of those builders' own `Path=/auth`
+  default. **This is load-bearing, not cosmetic**: every `webapp` route
+  (`/login`, `/logout`, `/browse/items/...`) is mounted at site root, not
+  under `/auth/*` — a `Path=/auth` cookie is never sent by a real browser
+  to any of them, which would silently 403 every CSRF-checked `webapp`
+  POST and starve `SilentRefreshMiddleware` of a `refresh_token` cookie
+  to refresh from. `core/views.py`'s own `LoginView`/`RefreshView`/
+  `LogoutView` (the JSON API track) are untouched — they still call
+  `core.security.auth.django.set_auth_cookies`/`clear_auth_cookies`
+  directly, still at `Path=/auth`, exactly as before. See
+  `webapp/cookies.py`'s own module docstring for the full story
+  (originally caught by a security review — Django's test `Client`
+  ignores cookie `Path` when matching cookies to later requests, so this
+  bug was invisible to the test suite until a `Path`-aware assertion was
+  added — see `tests/test_auth_views.py`'s
+  `test_login_response_cookies_are_all_scoped_to_path_root`).
 
 **Principal resolution** (`webapp/auth.py`): every page that needs the
 current user reads the `access_token` cookie and resolves it via
@@ -407,7 +426,9 @@ docs/
   re-rendering the SAME `_login_form.html` partial with an inline error on
   failure (`htmx.md`'s "Forms & validation").
 - **`POST /logout`** — POST-only, CSRF-checked, clears all three cookies
-  via `clear_auth_cookies` plus this block's own `access_token` cookie.
+  via `webapp/cookies.py`'s `clear_webapp_auth_cookies` (`refresh_token`/
+  `csrf_token`, at this block's own `Path=/`) plus this block's own
+  `access_token` cookie.
 - **`GET /browse/items`** — server-rendered pagination (`PageParams`,
   reused from `core.contract.pagination`) + an `hx-get` search input with
   `hx-trigger="keyup changed delay:300ms, search"` — `htmx.md`'s exact
@@ -486,8 +507,11 @@ redirect an anonymous visitor to `/login?next=...` instead of acting.
   need to re-authenticate some other way. This is still safe: `HttpOnly`
   (never exposed to JS, so an XSS bug on this origin can't read it any
   more than it could read the refresh cookie), `Secure`, `SameSite=Lax`,
-  scoped `Path=/` (broader than the refresh/csrf pair's `Path=/auth`,
-  deliberately — every page route needs to read it, not just `/auth/*`),
+  scoped `Path=/` — matching the `refresh_token`/`csrf_token` pair
+  `webapp/cookies.py` also sets at `Path=/` (see "Auth & CSRF" above and
+  that module's own docstring: `webapp`'s routes are all mounted at site
+  root, not under `/auth/*`, so every one of this block's own cookies has
+  to be `Path=/`, unlike the JSON API track's `/auth/*`-scoped pair) —
   and a short TTL matching `JWT_ACCESS_TTL_SECONDS` (900s default) — an
   access token is already a short-lived, low-blast-radius credential by
   design (see `core/security/auth/_core.py`'s own docstrings), and this
@@ -512,6 +536,28 @@ redirect an anonymous visitor to `/login?next=...` instead of acting.
   An HTML route has no JSON contract to stay consistent with; a plain
   `403`/redirect is the right shape for a browser-navigated page, matching
   how any other server-rendered Django view fails.
+- **`webapp/cookies.py` exists, instead of `webapp` calling
+  `core.security.auth.django.set_auth_cookies`/`clear_auth_cookies`
+  directly, because of a real Path bug caught in review.** An earlier
+  version of this block called those two functions straight from
+  `webapp/views.py`/`webapp/middleware.py`, which set `refresh_token`/
+  `csrf_token` at the vendored `_cookies.py` builders' own `Path=/auth`
+  default — correct for the JSON API's `/auth/*`-only routes, but
+  `webapp`'s own routes (`/login`, `/logout`, `/browse/items/...`) are
+  mounted at site root. A real browser never attaches a `Path=/auth`
+  cookie to a `Path=/`-mounted request, so every CSRF-checked `webapp`
+  POST would 403 unconditionally and `SilentRefreshMiddleware` would
+  never see a `refresh_token` cookie to refresh from — a functional
+  break, not a security bypass (the double-submit check still fails
+  CLOSED). Django's test `Client` ignores cookie `Path` when deciding
+  what to resend on a later request, so the original 17-test suite
+  passed anyway; only a `Path`-aware assertion on the rendered
+  `Set-Cookie` text (now in `tests/test_auth_views.py`, including the
+  dedicated `test_login_response_cookies_are_all_scoped_to_path_root`)
+  catches it. Fixed by giving `webapp` its own `Path=/`-scoped cookie
+  helpers (`webapp/cookies.py`) that reuse `_cookies.py`'s builders for
+  every OTHER flag — the JSON API track's own cookie behavior is
+  unchanged.
 - **The item-browsing page is `/browse/items`, not `/items`** — see
   "Wiring into apps/api" for the routing-collision rationale.
 - **`django.contrib.sessions`/`django.contrib.messages` are added to

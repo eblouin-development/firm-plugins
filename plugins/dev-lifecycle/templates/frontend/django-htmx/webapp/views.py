@@ -22,9 +22,9 @@ from django.views.decorators.http import require_http_methods
 from core.contract.pagination import PageParams
 from core.models import Item
 from core.security.auth import AuthError, CsrfValidationError, generate_csrf_token
-from core.security.auth.django import clear_auth_cookies, set_auth_cookies
 from core.security.auth.stores import AuthNotConfiguredError, build_auth_service
 from webapp.auth import ACCESS_COOKIE_NAME, enforce_csrf_header_or_form, get_current_principal
+from webapp.cookies import clear_webapp_auth_cookies, set_webapp_auth_cookies
 from webapp.decorators import login_required
 from webapp.forms import ItemForm, LoginForm
 
@@ -116,7 +116,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
         secure=True,
         samesite="lax",
     )
-    set_auth_cookies(
+    set_webapp_auth_cookies(
         response,
         refresh_value=pair.refresh,
         csrf_value=generate_csrf_token(),
@@ -148,8 +148,9 @@ def _render_login_form(request: HttpRequest, form: LoginForm, *, auth_error: str
 def logout_view(request: HttpRequest) -> HttpResponse:
     """`POST /logout` — POST-only, CSRF-checked (state-changing: revokes
     the presented refresh token's entire family via `AuthService.logout`),
-    clears all three cookies via `clear_auth_cookies` (the existing
-    refresh/csrf pair) plus this block's own `access_token` cookie. A
+    clears all three cookies via `clear_webapp_auth_cookies` (the
+    existing refresh/csrf pair, at this block's own `Path=/` — see
+    `webapp/cookies.py`) plus this block's own `access_token` cookie. A
     missing/invalid CSRF token gets a PLAIN 403 (not the JSON
     `ErrorEnvelope` the API track uses) — see the block README's "Auth &
     CSRF" section for why a plain response, not the envelope, is the
@@ -173,7 +174,7 @@ def logout_view(request: HttpRequest) -> HttpResponse:
 
     response = redirect("webapp-home")
     response.delete_cookie(ACCESS_COOKIE_NAME, path="/")
-    clear_auth_cookies(response)
+    clear_webapp_auth_cookies(response)
     return response
 
 
@@ -183,7 +184,7 @@ def logout_view(request: HttpRequest) -> HttpResponse:
 
 
 def items_list(request: HttpRequest) -> HttpResponse:
-    """`GET /items` — server-rendered pagination + an `hx-get`
+    """`GET /browse/items` — server-rendered pagination + an `hx-get`
     search/filter input with debounce (`templates/webapp/items/list.html`
     wires `hx-trigger="keyup changed delay:300ms, search"`, `htmx.md`'s
     exact pattern). Detects `HX-Request` and renders ONLY
@@ -225,7 +226,7 @@ def items_list(request: HttpRequest) -> HttpResponse:
 @login_required
 @require_http_methods(["POST"])
 def item_create(request: HttpRequest) -> HttpResponse:
-    """`POST /items/create` — gated behind `login_required` so the auth
+    """`POST /browse/items/create` — gated behind `login_required` so the auth
     story is actually exercised, not just present (block README, "What
     this demonstrates"). Returns just the new `<li>` fragment on success
     (`hx-post` on the create form swaps it into the list via
@@ -265,7 +266,7 @@ def item_create(request: HttpRequest) -> HttpResponse:
 @login_required
 @require_http_methods(["POST"])
 def item_delete(request: HttpRequest, item_id: uuid.UUID) -> HttpResponse:
-    """`POST /items/<item_id>/delete` — gated behind `login_required`, the
+    """`POST /browse/items/<item_id>/delete` — gated behind `login_required`, the
     demo surface's second mutating, auth-exercising route. Soft-deletes
     via `Item.mark_deleted()` (the SAME soft-delete convention
     `core/models.py`'s `Item` already establishes for the JSON API track —

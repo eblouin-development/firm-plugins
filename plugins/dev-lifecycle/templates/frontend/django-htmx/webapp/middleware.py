@@ -36,9 +36,10 @@ from asgiref.sync import async_to_sync
 from django.conf import settings
 
 from core.security.auth import AuthError, generate_csrf_token
-from core.security.auth.django import read_refresh_cookie, set_auth_cookies
+from core.security.auth.django import read_refresh_cookie
 from core.security.auth.stores import AuthNotConfiguredError, build_auth_service
 from webapp.auth import ACCESS_COOKIE_NAME
+from webapp.cookies import set_webapp_auth_cookies
 
 
 class SilentRefreshMiddleware:
@@ -94,7 +95,7 @@ class SilentRefreshMiddleware:
             secure=True,
             samesite="lax",
         )
-        set_auth_cookies(
+        set_webapp_auth_cookies(
             response,
             refresh_value=pending["refresh_token"],
             csrf_value=pending["csrf_token"],

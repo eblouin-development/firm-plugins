@@ -1,7 +1,7 @@
 <!--
 scope: cross-stack starter kit
-versions-covered: "Stage 0 kit-wide pin set, 2026-07; Stage 2 security-tooling pin set, 2026-07; Stage 4 psycopg row, 2026-07; Stage 4 Step 3 django-cors-headers row, 2026-07; Stage 4 Step 4 Containers rows now also cite backend/django, 2026-07; Stage 6 Frontend/web + Frontend testing rows for the Vite SPA / @repo/web-shared stack, 2026-07; Stage 8 Mobile expo-router/expo-secure-store/react-native-screens/react-native-safe-area-context rows, 2026-07; Stage 7 Next.js frontend @tailwindcss/postcss row (Frontend testing rows reused unchanged from Stage 6 — same vitest/Testing Library/jsdom/msw toolchain), 2026-07; Stage 13 admin tool (editor) — new 'Editor (WYSIWYG)' TipTap rows (@tiptap/react, @tiptap/pm, @tiptap/starter-kit, @tiptap/extension-link), consumed only by apps/admin (Stage 13d, not yet), 2026-07; Stage 13d blog/CMS backend — new nh3 row, 2026-07; issue #100 worker/celery block — Celery/redis-py/django-celery-beat + Data/Containers Redis rows, 2026-07; #102 htmx/Tailwind-CLI rows, 2026-07"
 last-verified: 2026-07-24
+versions-covered: "Stage 0 kit-wide pin set; Stage 2 security-tooling; Stage 4 psycopg + django-cors-headers + Containers rows; Stage 6 Frontend/web + testing rows (Vite SPA / @repo/web-shared); Stage 8 Mobile (expo-router/expo-secure-store/react-native-screens/react-native-safe-area-context); Stage 7 Next.js @tailwindcss/postcss row; Stage 13 admin TipTap rows (apps/admin); Stage 13d nh3 row; issue #100 worker/celery block (Celery/redis-py/django-celery-beat + Redis rows); issue #102 htmx/Tailwind-CLI rows — all 2026-07"
 provenance: manual
 sources:
   - https://www.npmjs.com/package/vite
