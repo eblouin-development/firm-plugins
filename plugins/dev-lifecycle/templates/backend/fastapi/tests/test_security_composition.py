@@ -111,13 +111,15 @@ def test_rate_limit_returns_429_with_retry_after_once_burst_is_exhausted(make_cl
     # refill_per_second is deliberately tiny (not 0 -- validate_refill_rate
     # rejects that, see rate_limiting/_core.py) so the 3-request capacity is
     # effectively exhausted for the rest of this test, no real-time sleep
-    # needed.
+    # needed. Bursts against /items, not /health -- see the "Issue #42"
+    # section below for why /health is now exempt from this middleware by
+    # default and must never be the route this suite proves 429 against.
     client = make_client(rate_limit_capacity=3, rate_limit_refill_per_second=0.0001)
 
-    allowed = [client.get("/health") for _ in range(3)]
+    allowed = [client.get("/items") for _ in range(3)]
     assert all(r.status_code == 200 for r in allowed)
 
-    denied = client.get("/health")
+    denied = client.get("/items")
     assert denied.status_code == 429
     assert denied.json()["detail"] == "rate limit exceeded"
     assert int(denied.headers["retry-after"]) > 0
@@ -128,13 +130,58 @@ def test_rate_limit_denial_still_carries_response_headers_from_outer_middleware(
     THROUGH request-id binding and security-headers (both wrap
     rate-limiting -- see create_app()'s documented order), so it should
     carry the same X-Request-ID/security headers as any other response,
-    not a bare, unadorned response that bypassed the rest of the stack."""
+    not a bare, unadorned response that bypassed the rest of the stack.
+    Bursts against /items -- see the "Issue #42" section below for why
+    /health is exempt from this middleware by default."""
     client = make_client(rate_limit_capacity=1, rate_limit_refill_per_second=0.0001)
-    client.get("/health")  # consumes the single token
-    denied = client.get("/health")
+    client.get("/items")  # consumes the single token
+    denied = client.get("/items")
     assert denied.status_code == 429
     assert "x-request-id" in denied.headers
     assert denied.headers["x-content-type-options"] == "nosniff"
+
+
+# --- Issue #42: /health + /readyz exempt from RateLimitMiddleware by default
+# ---------------------------------------------------------------------------
+# Behind a TLS-terminating proxy at the safe default trusted_hops=0, every
+# request shares ONE bucket keyed on the proxy's own peer address -- an LB
+# polling /health under burst could 429 its own health check and mark this
+# instance unhealthy, an outage the limiter itself caused. See
+# rate_limiting/fastapi.py's RateLimitMiddleware.exempt_paths docstring and
+# app/main.py's Call 2 of 4 comment.
+
+
+def test_health_never_429s_under_a_burst_that_would_trip_a_normal_route(make_client) -> None:
+    """The regression test for issue #42: capacity=1 means the SECOND
+    request of any kind would normally trip the limiter -- /health stays
+    200 across many more requests than that because it never touches the
+    bucket at all (RateLimitMiddleware.exempt_paths' default)."""
+    client = make_client(rate_limit_capacity=1, rate_limit_refill_per_second=0.0001)
+    for _ in range(10):
+        assert client.get("/health").status_code == 200
+
+
+def test_readyz_never_429s_under_a_burst_that_would_trip_a_normal_route(make_client) -> None:
+    """Same regression as above, for the readiness probe -- an orchestrator
+    polling /readyz to decide whether to route traffic to this instance
+    must never see a self-inflicted 429 either."""
+    client = make_client(rate_limit_capacity=1, rate_limit_refill_per_second=0.0001)
+    for _ in range(10):
+        assert client.get("/readyz").status_code == 200
+
+
+def test_health_exemption_does_not_affect_a_normal_route_sharing_the_same_bucket_capacity(
+    make_client,
+) -> None:
+    """No regression to the limiter itself: /items (NOT exempt) still 429s
+    under the same low-capacity settings that leave /health untouched --
+    proves the exemption is scoped to /health + /readyz, not a global
+    bypass."""
+    client = make_client(rate_limit_capacity=1, rate_limit_refill_per_second=0.0001)
+    for _ in range(5):
+        assert client.get("/health").status_code == 200
+    assert client.get("/items").status_code == 200  # /items' own first (and only) token
+    assert client.get("/items").status_code == 429
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ needs:
   - a shared store for multi-process/multi-replica deployments (optional, Stage 11): InMemoryBucketStore is per-process only -- see Judgment calls
 exposes:
   - BucketStore (Protocol), InMemoryBucketStore, RateLimitResult, check(store, key, *, capacity, refill_per_second, now=None), client_ip_key(remote_addr, forwarded_for, *, trusted_hops=0), validate_refill_rate(refill_per_second) -- in _core.py
-  - fastapi.py: make_rate_limit_dependency(store, *, capacity, refill_per_second, key_func=None, trusted_hops=0), RateLimitMiddleware
+  - fastapi.py: make_rate_limit_dependency(store, *, capacity, refill_per_second, key_func=None, trusted_hops=0), RateLimitMiddleware (exempt_paths=None, defaulting to _DEFAULT_EXEMPT_PATHS = {"/health", "/readyz"})
   - django.py: RateLimitMiddleware (settings-configurable: RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_PER_SECOND, RATE_LIMIT_TRUSTED_HOPS)
   - its co-located doc fragment: docs/fragment.md
 -->
@@ -63,7 +63,8 @@ not an app-layer template block.
   against `refill_per_second<=0`) — all in `_core.py`.
 - `fastapi.py`: `make_rate_limit_dependency(store, *, capacity,
   refill_per_second, key_func=None, trusted_hops=0)` (per-route),
-  `RateLimitMiddleware` (whole-app).
+  `RateLimitMiddleware` (whole-app; `exempt_paths=None`, defaulting to
+  `_DEFAULT_EXEMPT_PATHS = {"/health", "/readyz"})`.
 - `django.py`: `RateLimitMiddleware`, configurable via `RATE_LIMIT_CAPACITY`
   / `RATE_LIMIT_REFILL_PER_SECOND` / `RATE_LIMIT_TRUSTED_HOPS` settings or
   direct constructor kwargs.
@@ -138,6 +139,18 @@ regardless of the general middleware's looser whole-app ceiling) — both can
 run together, against different `BucketStore` instances or the same one
 with a different key, since they're independent by construction.
 
+`RateLimitMiddleware`'s `exempt_paths` (default `_DEFAULT_EXEMPT_PATHS =
+{"/health", "/readyz"}`) is checked before the key func runs and before a
+token is consumed — an exempt request bypasses the limiter entirely,
+never touching the bucket. This closes the exact failure mode a
+TLS-terminating proxy at the safe default `trusted_hops=0` creates: every
+request the middleware sees shares one bucket keyed on the proxy's own
+peer address, so a load balancer polling `/health` under burst can 429
+its own health check and get marked unhealthy — an outage the limiter
+itself caused. Pass `exempt_paths=frozenset()` to opt out of the default
+exemption (a project that genuinely wants its health endpoint
+rate-limited); pass a different set to exempt other paths instead.
+
 ## Django: settings-configurable
 
 Django instantiates a `MIDDLEWARE` entry with only `get_response` — there's
@@ -166,8 +179,11 @@ falling back to `remote_addr` on an absent/blank/insufficient XFF),
 `tests/test_fastapi.py` exercises both the middleware and dependency
 variants against a real FastAPI `TestClient` (allow-then-429,
 `Retry-After` present, an undecorated route unaffected by a decorated
-one's drained bucket, and construction-time rejection of
-`refill_per_second<=0` for both variants). `tests/test_django.py`
+one's drained bucket, construction-time rejection of
+`refill_per_second<=0` for both variants, `/health`/`/readyz` never
+429ing under a burst that WOULD trip a non-exempt route, a non-exempt
+route still getting 429 under that same burst, and the default exemption
+being disableable via `exempt_paths=frozenset()`). `tests/test_django.py`
 exercises the middleware via `RequestFactory` the same way, plus the
 XFF-ignored-by-default vs. rightmost-entry-honored-when-`trusted_hops=1`
 behavior (including that a spoofed leftmost entry does not bypass the

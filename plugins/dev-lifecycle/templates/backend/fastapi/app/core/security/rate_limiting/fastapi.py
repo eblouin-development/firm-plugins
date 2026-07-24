@@ -30,6 +30,14 @@ from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
+# A readiness/liveness probe must never be gated by the same bucket as
+# ordinary traffic: an edge proxy/load balancer polling `/health` far more
+# often than `capacity` allows would otherwise get 429'd under burst and
+# read that as an outage (see `RateLimitMiddleware`'s own docstring on
+# `exempt_paths`). Matches `django.py`'s `_DEFAULT_EXEMPT_PATHS` exactly --
+# same default set, same "bypasses the bucket entirely" semantics.
+_DEFAULT_EXEMPT_PATHS: frozenset[str] = frozenset({"/health", "/readyz"})
+
 
 def _default_key_func(request: Request, *, trusted_hops: int) -> str:
     remote_addr = request.client.host if request.client else "unknown"
@@ -78,7 +86,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     per-IP API ceiling (secure-baseline's "apply a general API rate limit");
     use the dependency for a stricter per-endpoint limit layered on top
     (e.g. login gets both the general middleware limit AND its own tighter
-    dependency limit)."""
+    dependency limit).
+
+    `exempt_paths` (default `_DEFAULT_EXEMPT_PATHS` above, `{"/health",
+    "/readyz"}`) are checked BEFORE the key func runs and BEFORE a token is
+    consumed -- an exempt request bypasses the limiter entirely, never
+    touching the bucket, never counted against any other client's budget
+    either. Pass an explicit `frozenset()` to disable the default exemption
+    (e.g. a project that genuinely wants its health endpoint rate-limited);
+    pass a different set to exempt other paths instead of/in addition to
+    the default two."""
 
     def __init__(
         self,
@@ -89,6 +106,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         refill_per_second: float,
         key_func: Callable[[Request], str] | None = None,
         trusted_hops: int = 0,
+        exempt_paths: frozenset[str] | None = None,
     ) -> None:
         _core.validate_refill_rate(refill_per_second)
         super().__init__(app)
@@ -96,8 +114,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.capacity = capacity
         self.refill_per_second = refill_per_second
         self.key_func = key_func or (lambda request: _default_key_func(request, trusted_hops=trusted_hops))
+        self.exempt_paths = exempt_paths if exempt_paths is not None else _DEFAULT_EXEMPT_PATHS
 
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in self.exempt_paths:
+            return await call_next(request)
         key = self.key_func(request)
         result = _core.check(
             self.store, key, capacity=self.capacity, refill_per_second=self.refill_per_second
