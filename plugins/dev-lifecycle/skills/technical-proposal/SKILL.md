@@ -36,6 +36,8 @@ Write a markdown proposal: problem & goals → recommended stack & architecture 
 ### 6. Hand off
 Present the recommendation and the decision it enables. For a greenfield that's a go, the next move is `product-planning` (north star + staged roadmap) → `scaffolding` (create & init the repo) → `planning` per stage.
 
+**Where you sit in the chain:** discovery → technical-proposal → web-proposal-writer → product-planning → planning.
+
 ## What this skill does NOT do
 - Fabricate costs, timelines, or metrics — estimate honestly with assumptions, or ask.
 - Write implementation code, scaffold, or create a repo.
